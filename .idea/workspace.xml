@@ -2,10 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="639809bd-d5d3-4c4a-b499-917790d97f66" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/MLtools.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/MLtools.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/prepro.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/create_annotations.py" beforeDir="false" afterPath="$PROJECT_DIR$/create_annotations.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

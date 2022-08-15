@@ -13,6 +13,10 @@ from tqdm import tqdm
 from rastertools import raster
 from pathlib import Path
 
+
+# TODO: if boulders located in tile but over NaN region!
+# TODO: save to shapefile (issues if working with different coordinates!) need to
+# TODO: save early in the process (before the concatenation)
 # should probably be moved to grid.py
 def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name):
 
@@ -176,7 +180,7 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
 def merge_dataframes(frames):
     return(pd.concat(frames, ignore_index=True))
 
-def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
+def split_global(df_selection_tiles, gdf_selection_tiles_updated, split, out_shapefile):
     """
     Shuffle tiles and randomly distributes the selection rectangle grids /
     graticules into a train / validation / test datasets (respecting the
@@ -194,6 +198,7 @@ def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
     :param split:
     :return:
     """
+    out_shapefile = Path(out_shapefile)
 
     np.random.seed(seed=27)
     n = df_selection_tiles.shape[0]
@@ -210,6 +215,12 @@ def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
     gdf_selection_tiles_updated["dataset"] = "train"
     gdf_selection_tiles_updated["dataset"].iloc[val_idx] = "validation"
     gdf_selection_tiles_updated["dataset"].iloc[test_idx] = "test"
+
+    # delete! save to shapefile (issues if working with different coordinates!)
+    # which is the case!! loop through coordinates and save one file for each
+    # coordinates...?
+    gdf_selection_tiles_updated.to_file(out_shapefile)
+    print("shapefile " + out_shapefile.as_posix() + " has been generated")
 
     return (df_selection_tiles, gdf_selection_tiles_updated)
 
@@ -277,9 +288,9 @@ def selection_boulders(df_selection_boulders, df_selection_tiles):
 
     return (df_selection_boulders_train, df_selection_boulders_validation, df_selection_boulders_test)
 
-def image(df_selection_tiles, dataset, dataset_directory, block_width, block_height, selection_boulders_pickle):
+def image(df_selection_tiles, dataset, dataset_directory, block_width, block_height, out_pickle):
 
-    selection_boulders_pickle = Path(selection_boulders_pickle)
+    out_pickle = Path(out_pickle)
     image_annotations = df_selection_tiles.copy()
     image_annotations = image_annotations[image_annotations["dataset"] == dataset]
 
@@ -291,12 +302,12 @@ def image(df_selection_tiles, dataset, dataset_directory, block_width, block_hei
     image_annotations["width"] = block_width
     image_annotations["file_name_ap"] = (dataset_directory / image_annotations["dataset"] / "image" / image_annotations["file_name"])
 
-    image_annotations.to_pickle(selection_boulders_pickle)
-    print("pickle " + selection_boulders_pickle.as_posix() + " has been generated")
+    image_annotations.to_pickle(out_pickle)
+    print("pickle " + out_pickle.as_posix() + " has been generated")
 
     return (image_annotations)
 
-def segmentation(df_selection_boulders, boulder_annotation_image, dataset_directory):
+def segmentation(df_selection_boulders, boulder_annotation_image, dataset_directory, out_pickle):
 
     """
     Note that both bbox and segmentations need to be given as x,y, while all the
@@ -308,6 +319,8 @@ def segmentation(df_selection_boulders, boulder_annotation_image, dataset_direct
     :param dataset_directory:
     :return:
     """
+
+    out_pickle = Path(out_pickle)
 
     bbox_xyxy_pixel = []
     bbox_xyxy_image = []
@@ -367,6 +380,13 @@ def segmentation(df_selection_boulders, boulder_annotation_image, dataset_direct
     df_selection_boulders["iscrowd"] = 0
 
     boulder_annotation_segmentation = df_selection_boulders.copy()
+
+    # saving as pickle and shapefile
+    boulder_annotation_segmentation.to_pickle(out_pickle)
+    gdf_boulder_annotation_segmentation = gpd.GeoDataFrame(boulder_annotation_segmentation.drop(columns=["bbox_xyxy_pixel", "bbox_xywh_pixel", "bbox_xyxy_image", "segmentation_mask", "area"]))
+    gdf_boulder_annotation_segmentation["area"] = gdf_boulder_annotation_segmentation.geometry.area
+    gdf_boulder_annotation_segmentation.to_file(out_pickle.with_name(out_pickle.name.replace(".pkl", ".shp")))
+
     return (boulder_annotation_segmentation)
 
 class NpEncoder(json.JSONEncoder):
@@ -434,4 +454,4 @@ def dataframes_to_json_coco_format(image_annotations_df, segmentation_annotation
     with open(out_json, "w") as outfile:
         json.dump(coco_annotations, outfile, indent=4)  # cls=NpEncoder
 
-    print(out_json.name + "has been generated")
+    print(out_json.name + " has been generated")
