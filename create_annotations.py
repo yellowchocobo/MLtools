@@ -18,7 +18,7 @@ from pathlib import Path
 # TODO: save to shapefile (issues if working with different coordinates!) need to
 # TODO: save early in the process (before the concatenation)
 # should probably be moved to grid.py
-def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name):
+def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name, stride=False, add_together=False):
 
     """
 
@@ -32,12 +32,13 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, globa_g
     globa_graticule_name = Path(globa_graticule_name)
     globa_graticule_name = globa_graticule_name.absolute()
     pickle_name = globa_graticule_name.with_name(globa_graticule_name.stem + ".pkl")
+    res = raster.get_raster_resolution(in_raster)[0]
 
-    (windows, transforms, bounds) = raster.tile_windows(in_raster, block_width, block_height)
+    (windows, transforms, bounds) = raster.tile_windows(in_raster, block_width, block_height, stride, add_together)
 
     polygons = [shapely.geometry.box(l, b, r, t) for l, b, r, t in bounds]
     tile_id = [i for i in range(len(bounds))]
-    image_id_png = [in_raster.stem + "_" + str(i).zfill(4) + "_image.png" for i in range(len(bounds))]
+    image_id_png = [in_raster.stem + "_" + str(i).zfill(4) + "_image.png" for i in range(len(bounds))] # can it get over 9999 tiles?
     raster_name_abs = [in_raster.as_posix() for i in range(len(bounds))]
     raster_name_rel = [in_raster.name for i in range(len(bounds))]
     windows_px = [list(i.flatten()) for i in windows]
@@ -45,17 +46,18 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, globa_g
     product_id = [in_raster.stem for i in range(len(bounds))]
     crs = raster.get_raster_crs(in_raster).wkt
     crs_l = [crs for i in range(len(bounds))]
+    res_l = [res for i in range(len(bounds))]
 
     df = pd.DataFrame(list(zip(product_id, tile_id, image_id_png,
                                raster_name_abs, raster_name_rel, windows_px,
-                               transforms_p, bounds, crs_l)),
-                      columns=['NAC_id', 'tile_id', 'file_name',
+                               transforms_p, bounds, crs_l, res_l)),
+                      columns=['image_id', 'tile_id', 'file_name',
                                'raster_ap', 'raster_rp', 'rwindows',
-                               'transform', 'bbox_im', 'coord_sys'])
+                               'transform', 'bbox_im', 'coord_sys', 'pix_res'])
     df.to_pickle(pickle_name)
     print("pickle " + pickle_name.as_posix() + " has been generated")
 
-    df_qgis = df[['NAC_id', 'tile_id', 'file_name']]
+    df_qgis = df[['image_id', 'tile_id', 'file_name']]
 
     gdf = gpd.GeoDataFrame(df_qgis, geometry=polygons)
     gdf = gdf.set_crs(crs)
@@ -99,9 +101,11 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
 
     # reading of the selection graticule(s)
     gdf_selection_tiles = gpd.read_file(selection_tiles_shapefile)
+    gdf_selection_tiles["coord_sys"] = gdf_selection_tiles.crs.to_wkt()
 
     # reading of the outline of boulders
     gdf_boulders = gpd.read_file(boulders_shapefile)
+    gdf_boulders["coord_sys"] = gdf_boulders.crs.to_wkt()
 
     frames = []
     empty_bbox = []
@@ -125,7 +129,7 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
             # copy everything except geometry (hardcoded, might be source of error)
             # depending on number of columns in the selection grid (be careful)
             # improve this bit in the future.
-            for c in gdf_selection_tiles.columns[:3]:
+            for c in ['image_id', 'tile_id', 'file_name', 'coord_sys']: #gdf_selection_tiles.columns[:3]:
                 gdf_clip[c] = row[c]
             frames.append(gdf_clip)
 
@@ -180,7 +184,7 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
 def merge_dataframes(frames):
     return(pd.concat(frames, ignore_index=True))
 
-def split_global(df_selection_tiles, gdf_selection_tiles_updated, split, out_shapefile):
+def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
     """
     Shuffle tiles and randomly distributes the selection rectangle grids /
     graticules into a train / validation / test datasets (respecting the
@@ -198,7 +202,7 @@ def split_global(df_selection_tiles, gdf_selection_tiles_updated, split, out_sha
     :param split:
     :return:
     """
-    out_shapefile = Path(out_shapefile)
+    #out_shapefile = Path(out_shapefile)
 
     np.random.seed(seed=27)
     n = df_selection_tiles.shape[0]
@@ -219,8 +223,8 @@ def split_global(df_selection_tiles, gdf_selection_tiles_updated, split, out_sha
     # delete! save to shapefile (issues if working with different coordinates!)
     # which is the case!! loop through coordinates and save one file for each
     # coordinates...?
-    gdf_selection_tiles_updated.to_file(out_shapefile)
-    print("shapefile " + out_shapefile.as_posix() + " has been generated")
+    #gdf_selection_tiles_updated.to_file(out_shapefile)
+    #print("shapefile " + out_shapefile.as_posix() + " has been generated")
 
     return (df_selection_tiles, gdf_selection_tiles_updated)
 
