@@ -19,6 +19,18 @@ from MLtools import create_annotations
 
 def predict(config_file, model_weights, device, image_dir, out_shapefile,
             search_pattern="*.tif", scores=0.5):
+    """
+    This function crashes if not a single prediction is detected!
+
+    :param config_file:
+    :param model_weights:
+    :param device:
+    :param image_dir:
+    :param out_shapefile:
+    :param search_pattern:
+    :param scores:
+    :return:
+    """
     # load model and weight of the models
     cfg = get_cfg()
     cfg.merge_from_file(config_file)
@@ -72,7 +84,14 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
                                                             crs=meta["crs"])
     gpd_polygonized_raster["scores"] = scores_list
     gpd_polygonized_raster["boulder_id"] = boulder_id
-    gpd_polygonized_raster.to_file(out_shapefile)
+    if gpd_polygonized_raster.shape[0] > 0:
+        gpd_polygonized_raster.to_file(out_shapefile)
+    else:
+        schema = {"geometry": "Polygon",
+                  "properties": {"raster_val": "float", "scores": "float",
+                                 "boulder_id": "int"}}
+        gdf_empty = gpd.GeoDataFrame(geometry=[])
+        gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
 
 def default_predictions(in_raster, config_file, model_weights, device, scores, search_tif_pattern,
                         graticule_no_stride_p, graticule_with_stride_p, graticule_top_bottom_p,
@@ -82,49 +101,61 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
     output_dir = Path(output_dir)
 
     # no stride
-    (df_no_stride, gdf_no_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_no_stride_p, stride=(0, 0))
-    df_no_stride["dataset"] = "inference-no-stride"
     dataset_directory = output_dir / "inference-no-stride" / "images"
-    create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height)
     out_shapefile = output_dir / "predictions-no-stride.shp"
-    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+    if out_shapefile.is_file():
+        print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
+    else:
+        (df_no_stride, gdf_no_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_no_stride_p, stride=(0, 0))
+        df_no_stride["dataset"] = "inference-no-stride"
+        create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # with stride
-    (df_w_stride, gdf_w_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_with_stride_p, stride=(250, 250))
-    df_w_stride["dataset"] = "inference-w-stride"
     dataset_directory = output_dir / "inference-w-stride" / "images"
-    create_annotations.tiling_raster_from_dataframe(df_w_stride, output_dir, block_width, block_height)
     out_shapefile = output_dir / "predictions-w-stride.shp"
-    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+    if out_shapefile.is_file():
+        print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
+    else:
+        (df_w_stride, gdf_w_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_with_stride_p, stride=(250, 250))
+        df_w_stride["dataset"] = "inference-w-stride"
+        create_annotations.tiling_raster_from_dataframe(df_w_stride, output_dir, block_width, block_height)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # top bottom
-    (df3, gdf3) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_top_bottom_p, stride=(250, 0))
-    gdf_bounds = gdf3.geometry.bounds
-    gdf_bounds["tile_id"] = gdf3.tile_id.values
-    tile_id_edge = list(gdf_bounds.tile_id[gdf_bounds.maxy == gdf3.geometry.total_bounds[-1]].values) + list(
-        gdf_bounds.tile_id[gdf_bounds.miny == gdf3.geometry.total_bounds[1]].values)
-    gdf_test = gdf3[gdf3.tile_id.isin(tile_id_edge)]
-    gdf_test.to_file(graticule_top_bottom_p)
-    df3 = df3[df3.tile_id.isin(tile_id_edge)]
-    df3["dataset"] = "inference-top-bottom"
     dataset_directory = output_dir / "inference-top-bottom" / "images"
-    create_annotations.tiling_raster_from_dataframe(df3, output_dir, block_width, block_height)
     out_shapefile = output_dir / "predictions-top-bottom.shp"
-    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+    if out_shapefile.is_file():
+        print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
+    else:
+        (df3, gdf3) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_top_bottom_p, stride=(250, 0))
+        gdf_bounds = gdf3.geometry.bounds
+        gdf_bounds["tile_id"] = gdf3.tile_id.values
+        tile_id_edge = list(gdf_bounds.tile_id[gdf_bounds.maxy == gdf3.geometry.total_bounds[-1]].values) + list(
+            gdf_bounds.tile_id[gdf_bounds.miny == gdf3.geometry.total_bounds[1]].values)
+        gdf_test = gdf3[gdf3.tile_id.isin(tile_id_edge)]
+        gdf_test.to_file(graticule_top_bottom_p)
+        df3 = df3[df3.tile_id.isin(tile_id_edge)]
+        df3["dataset"] = "inference-top-bottom"
+        create_annotations.tiling_raster_from_dataframe(df3, output_dir, block_width, block_height)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # left right
-    (df4, gdf4) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_left_right_p, stride=(0, 250))
-    gdf_bounds = gdf4.geometry.bounds
-    gdf_bounds["tile_id"] = gdf4.tile_id.values
-    tile_id_edge = list(gdf_bounds.tile_id[gdf_bounds.maxx == gdf4.geometry.total_bounds[-2]].values) + list(gdf_bounds.tile_id[gdf_bounds.minx == gdf4.geometry.total_bounds[0]].values)
-    gdf_test = gdf4[gdf4.tile_id.isin(tile_id_edge)]
-    gdf_test.to_file(graticule_left_right_p)
-    df4 = df4[df4.tile_id.isin(tile_id_edge)]
-    df4["dataset"] = "inference-left-right"
     dataset_directory = output_dir / "inference-left-right" / "images"
-    create_annotations.tiling_raster_from_dataframe(df4, output_dir, block_width, block_height)
     out_shapefile = output_dir / "predictions-left-right.shp"
-    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+    if out_shapefile.is_file():
+        print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
+    else:
+        (df4, gdf4) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_left_right_p, stride=(0, 250))
+        gdf_bounds = gdf4.geometry.bounds
+        gdf_bounds["tile_id"] = gdf4.tile_id.values
+        tile_id_edge = list(gdf_bounds.tile_id[gdf_bounds.maxx == gdf4.geometry.total_bounds[-2]].values) + list(gdf_bounds.tile_id[gdf_bounds.minx == gdf4.geometry.total_bounds[0]].values)
+        gdf_test = gdf4[gdf4.tile_id.isin(tile_id_edge)]
+        gdf_test.to_file(graticule_left_right_p)
+        df4 = df4[df4.tile_id.isin(tile_id_edge)]
+        df4["dataset"] = "inference-left-right"
+        create_annotations.tiling_raster_from_dataframe(df4, output_dir, block_width, block_height)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # fixing edge issues
     predictions_no_stride = output_dir / "predictions-no-stride.shp"
@@ -242,8 +273,10 @@ def lines_where_boulders_intersect_edges(gdf_boulders, gdf_lines, output_filenam
 
     gdf_LineString = edge_issues[edge_issues.geometry.geom_type == 'LineString']
     gdf_AllLines = gpd.GeoDataFrame(pd.concat([gdf_LineString, gdf_MultiLineString], ignore_index=True))
-    gdf_AllLines.to_file(output_dir / output_filename)
-
+    if gdf_AllLines.shape[0] > 0:
+        gdf_AllLines.to_file(output_dir / output_filename)
+    else:
+        None
     return (gdf_AllLines)
 
 # should replace
@@ -262,19 +295,22 @@ def replace_boulder_intersecting(gdf_boulders_original, gdf_boulders_replace, gd
     :return:
     """
     print("...replacing boulders at edge...")
-    gdf_edge_intersections.boulder_id = gdf_edge_intersections.boulder_id.astype('int')
-    idx_boulders_at_edge = gdf_edge_intersections.boulder_id.unique()
+    if gdf_edge_intersections.shape[0] > 0:
+        gdf_edge_intersections.boulder_id = gdf_edge_intersections.boulder_id.astype('int')
+        idx_boulders_at_edge = gdf_edge_intersections.boulder_id.unique()
 
-    gdf_boulders_original_at_edge = gdf_boulders_original[gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge)]
-    gdf_boulders_original_not_at_edge = gdf_boulders_original[~(gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge))]
+        gdf_boulders_original_at_edge = gdf_boulders_original[gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge)]
+        gdf_boulders_original_not_at_edge = gdf_boulders_original[~(gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge))]
 
-    # Finding intersecting boulders in other
-    gdf_boulders_replace_intersecting = gpd.overlay(gdf_boulders_replace, gdf_edge_intersections, how='intersection', keep_geom_type=False)
-    idx_boulders_at_edge = gdf_boulders_replace_intersecting.boulder_id_1.unique()
-    gdf_boulders_replace_at_edge = gdf_boulders_replace[gdf_boulders_replace.boulder_id.isin(idx_boulders_at_edge)]
+        # Finding intersecting boulders in other
+        gdf_boulders_replace_intersecting = gpd.overlay(gdf_boulders_replace, gdf_edge_intersections, how='intersection', keep_geom_type=False)
+        idx_boulders_at_edge = gdf_boulders_replace_intersecting.boulder_id_1.unique()
+        gdf_boulders_replace_at_edge = gdf_boulders_replace[gdf_boulders_replace.boulder_id.isin(idx_boulders_at_edge)]
 
-    gdf = gpd.GeoDataFrame(pd.concat([gdf_boulders_original_not_at_edge, gdf_boulders_replace_at_edge], ignore_index=True))
-    gdf.boulder_id = np.arange(gdf.shape[0])
+        gdf = gpd.GeoDataFrame(pd.concat([gdf_boulders_original_not_at_edge, gdf_boulders_replace_at_edge], ignore_index=True))
+        gdf.boulder_id = np.arange(gdf.shape[0])
+    else:
+        gdf = gdf_boulders_original
     gdf.to_file(output_dir / output_filename)
     return (gdf)
 
@@ -453,5 +489,8 @@ def quickfix_invalid_geometry(boulders_shp):
             pd.concat([gdf_valid, gdf_invalid], ignore_index=False))
     else:
         None
-    gdf_boulders.to_file(boulders_shp)
+    if gdf_boulders.shape[0] > 0: # if non-empty
+        gdf_boulders.to_file(boulders_shp)
+    else:
+        None
     return (gdf_boulders)
