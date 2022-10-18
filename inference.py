@@ -14,8 +14,8 @@ from tqdm import tqdm
 from detectron2.config import get_cfg
 from detectron2.engine import DefaultPredictor
 
-sys.path.append("/home/nilscp/GIT/rastertools")
-import raster
+sys.path.append("/home/nilscp/GIT/")
+from MLtools import create_annotations
 
 def predict(config_file, model_weights, device, image_dir, out_shapefile,
             search_pattern="*.tif", scores=0.5):
@@ -74,162 +74,382 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
     gpd_polygonized_raster["boulder_id"] = boulder_id
     gpd_polygonized_raster.to_file(out_shapefile)
 
-#TODO
-def fix_edge_cases(predictions_no_stride, predictions_with_stride,
-                   graticule_no_stride, graticule_with_stride, in_raster):
+def default_predictions(in_raster, config_file, model_weights, device, scores, search_tif_pattern,
+                        graticule_no_stride_p, graticule_with_stride_p, graticule_top_bottom_p,
+                        graticule_left_right_p,
+                        block_width, block_height, output_dir):
+
+    output_dir = Path(output_dir)
+
+    # no stride
+    (df_no_stride, gdf_no_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_no_stride_p, stride=(0, 0))
+    df_no_stride["dataset"] = "inference-no-stride"
+    dataset_directory = output_dir / "inference-no-stride" / "images"
+    create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height)
+    out_shapefile = output_dir / "predictions-no-stride.shp"
+    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+
+    # with stride
+    (df_w_stride, gdf_w_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_with_stride_p, stride=(250, 250))
+    df_w_stride["dataset"] = "inference-w-stride"
+    dataset_directory = output_dir / "inference-w-stride" / "images"
+    create_annotations.tiling_raster_from_dataframe(df_w_stride, output_dir, block_width, block_height)
+    out_shapefile = output_dir / "predictions-w-stride.shp"
+    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+
+    # top bottom
+    (df3, gdf3) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_top_bottom_p, stride=(250, 0))
+    gdf_bounds = gdf3.geometry.bounds
+    gdf_bounds["tile_id"] = gdf3.tile_id.values
+    tile_id_edge = list(gdf_bounds.tile_id[gdf_bounds.maxy == gdf3.geometry.total_bounds[-1]].values) + list(
+        gdf_bounds.tile_id[gdf_bounds.miny == gdf3.geometry.total_bounds[1]].values)
+    gdf_test = gdf3[gdf3.tile_id.isin(tile_id_edge)]
+    gdf_test.to_file(graticule_top_bottom_p)
+    df3 = df3[df3.tile_id.isin(tile_id_edge)]
+    df3["dataset"] = "inference-top-bottom"
+    dataset_directory = output_dir / "inference-top-bottom" / "images"
+    create_annotations.tiling_raster_from_dataframe(df3, output_dir, block_width, block_height)
+    out_shapefile = output_dir / "predictions-top-bottom.shp"
+    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+
+    # left right
+    (df4, gdf4) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_left_right_p, stride=(0, 250))
+    gdf_bounds = gdf4.geometry.bounds
+    gdf_bounds["tile_id"] = gdf4.tile_id.values
+    tile_id_edge = list(gdf_bounds.tile_id[gdf_bounds.maxx == gdf4.geometry.total_bounds[-2]].values) + list(gdf_bounds.tile_id[gdf_bounds.minx == gdf4.geometry.total_bounds[0]].values)
+    gdf_test = gdf4[gdf4.tile_id.isin(tile_id_edge)]
+    gdf_test.to_file(graticule_left_right_p)
+    df4 = df4[df4.tile_id.isin(tile_id_edge)]
+    df4["dataset"] = "inference-left-right"
+    dataset_directory = output_dir / "inference-left-right" / "images"
+    create_annotations.tiling_raster_from_dataframe(df4, output_dir, block_width, block_height)
+    out_shapefile = output_dir / "predictions-left-right.shp"
+    predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+
+    # fixing edge issues
+    predictions_no_stride = output_dir / "predictions-no-stride.shp"
+    predictions_with_stride = output_dir / "predictions-w-stride.shp"
+    predictions_left_right = output_dir / "predictions-left-right.shp"
+    predictions_top_bottom = output_dir / "predictions-top-bottom.shp"
+
+    # fix invalid geometry (not sure if this work in all cases!)
+    __ = quickfix_invalid_geometry(predictions_no_stride)
+    __ = quickfix_invalid_geometry(predictions_with_stride)
+    __ = quickfix_invalid_geometry(predictions_left_right)
+    __ = quickfix_invalid_geometry(predictions_top_bottom)
+
+    gdf = fix_edge_cases(predictions_no_stride, predictions_with_stride,
+                         predictions_top_bottom, predictions_left_right,
+                         graticule_no_stride_p, graticule_with_stride_p,
+                         output_dir)
+
+    return gdf
+
+def geometry_for_inference(gra_no_stride, output_filename, output_dir):
+
+    # ---------------------------------------------------------------------------
+    # Generating edges as polyline for the center parts of the image
+    gra_center = gra_no_stride.geometry.bounds
+    gra_center["tile_id"] = gra_no_stride.tile_id.values
+    a = (gra_center.minx != gra_no_stride.geometry.total_bounds[0]) & (
+                gra_center.maxx != gra_no_stride.geometry.total_bounds[2])
+
+    b = (gra_center.miny != gra_no_stride.geometry.total_bounds[1]) & (
+                gra_center.maxy != gra_no_stride.geometry.total_bounds[3])
+
+    c = gra_center[a & b]
+    tile_id_edge = c.tile_id.values
+    d = gra_no_stride[gra_no_stride.tile_id.isin(tile_id_edge)]
+    gra_center = d.geometry.boundary
+    gra_center = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_center))
+
+    # ---------------------------------------------------------------------------
+    # Generating edges as polyline for the top and bottom parts of the image
+    gra_edge_top_bottom = gra_no_stride.geometry.bounds
+    gra_edge_top_bottom["tile_id"] = gra_no_stride.tile_id.values
+    tile_id_edge = list(
+        gra_edge_top_bottom.tile_id[gra_edge_top_bottom.maxy == gra_no_stride.geometry.total_bounds[-1]].values) + list(
+        gra_edge_top_bottom.tile_id[gra_edge_top_bottom.miny == gra_no_stride.geometry.total_bounds[1]].values)
+    gra_edge_top_bottom = gra_no_stride[gra_no_stride.tile_id.isin(tile_id_edge)]
+    gra_edge_top_bottom = gra_edge_top_bottom.geometry.boundary
+    gra_edge_top_bottom = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_edge_top_bottom))
+    gra_edge_top_bottom = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_edge_top_bottom.difference(
+            box(*gra_no_stride.total_bounds).boundary), crs=gra_no_stride.crs))
+
+    gra_edge_top_bottom = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_edge_top_bottom.difference(d.geometry.unary_union.boundary),
+        crs=gra_no_stride.crs))
+
+    # ---------------------------------------------------------------------------
+    # Generating edges as polyline for the left and right parts of the image
+    gra_edge_left_right = gra_no_stride.geometry.bounds
+    gra_edge_left_right["tile_id"] = gra_no_stride.tile_id.values
+
+    tile_id_edge = list(gra_edge_left_right.tile_id[gra_edge_left_right.maxx == gra_no_stride.geometry.total_bounds[-2]].values) + list(
+        gra_edge_left_right.tile_id[gra_edge_left_right.minx == gra_no_stride.geometry.total_bounds[0]].values)
+    gra_edge_left_right = gra_no_stride[gra_no_stride.tile_id.isin(tile_id_edge)]
+    gra_edge_left_right = gra_edge_left_right.geometry.boundary
+    gra_edge_left_right = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_edge_left_right))
+    gra_edge_left_right = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_edge_left_right.difference(
+            box(*gra_no_stride.total_bounds).boundary), crs=gra_no_stride.crs))
+    gra_edge_left_right = gpd.GeoDataFrame(geometry=gpd.GeoSeries(
+        gra_edge_left_right.difference(d.geometry.unary_union.boundary),
+        crs=gra_no_stride.crs))
+
+    # ---------------------------------------------------------------------------
+    # Updating the two last ones to get the right polylines
+    sp = gpd.overlay(gra_edge_top_bottom, gra_edge_left_right, how='intersection', keep_geom_type=False)
+    sp = sp[sp.geometry.geom_type == "LineString"]
+    sp_bounds = sp.bounds
+    gra_line_top_bottom = sp_bounds[
+        np.logical_or(sp_bounds.miny == np.min(sp_bounds.miny),
+                      sp_bounds.maxy == np.max(sp_bounds.maxy))]
+    gra_line_left_right = sp_bounds[
+        np.logical_or(sp_bounds.minx == np.min(sp_bounds.minx),
+                      sp_bounds.maxx == np.max(sp_bounds.maxx))]
+
+    gra_edge_left_right_final = gpd.overlay(gra_edge_left_right, sp.loc[gra_line_top_bottom.index],
+                how="symmetric_difference", keep_geom_type=False)
+
+    gra_edge_top_bottom_final = gpd.overlay(gra_edge_top_bottom, sp.loc[gra_line_left_right.index],
+                how="symmetric_difference", keep_geom_type=False)
+
+    gra_center.to_file(output_dir / output_filename[0]) # "edge-lines-center.shp"
+    gra_edge_left_right_final.to_file(output_dir / output_filename[1]) # "edge-lines-left-right.shp"
+    gra_edge_top_bottom_final.to_file(output_dir / output_filename[2]) # "edge-lines-top-bottom.shp"
+
+    return (gra_center, gra_edge_left_right_final, gra_edge_top_bottom_final)
+
+def lines_where_boulders_intersect_edges(gdf_boulders, gdf_lines, output_filename, output_dir):
 
     """
-    I have found 5 potential outcome, and 4 edge cases so far:
+    Maybe better to give filename? --> avoid loading the dataset every times..
 
-    - (1) Originating from the non-shifted graticules,
-    not intersecting any edges.
+    :param boulders_shp:
+    :param lines_shp:
+    :param output_dir:
+    :return:
+    """
+    edge_issues = gpd.overlay(gdf_boulders, gdf_lines, how='intersection', keep_geom_type=False)
+    edge_issues.geometry.geom_type.unique()
 
-    - (2) Boulders intersecting the non-shifted graticules edges, so replaced by
-    boulders from the shifted graticules (intersecting also the non-shifted
-    graticules edges).
-    ----------------------------------------------------------------------------
-    intersect of non-shifted graticule edges (as a line) with non-shifted boulders
-    replaced by
-    intersect of non-shifted graticule edges (as a line) with shifted boulders
-    ----------------------------------------------------------------------------
+    # only keep the longest line when a multilinestring is generated
+    gdf_MultiLineString = edge_issues[edge_issues.geometry.geom_type == 'MultiLineString']
+    gdf_MultiLineString = gdf_MultiLineString.explode()
+    gdf_MultiLineString["length"] = gdf_MultiLineString.geometry.length
+    gdf_MultiLineString = gdf_MultiLineString.sort_values(by=["boulder_id", "length"])
+    gdf_MultiLineString = gdf_MultiLineString.drop_duplicates(subset="boulder_id", keep='last')
 
-    - (3) Boulders might touch the edge og the non-shifted graticules but be on
-    the outside of the shifted graticule (where there are no predictions!).
-    In this case, the non-shifted predictions should be kept.
-    ----------------------------------------------------------------------------
-    symmetrical difference of both graticules
-    intersect of non-shifted graticule edges
-    ----------------------------------------------------------------------------
+    gdf_LineString = edge_issues[edge_issues.geometry.geom_type == 'LineString']
+    gdf_AllLines = gpd.GeoDataFrame(pd.concat([gdf_LineString, gdf_MultiLineString], ignore_index=True))
+    gdf_AllLines.to_file(output_dir / output_filename)
 
-    - (4) Boulders might overlap if one boulder is one pixel off in the edge of
-    the patch (not selected), but is touching/intersecting in the prediction
-    with stride --> lead to duplicates, and therefore need to be merged...
+    return (gdf_AllLines)
 
-    - (5) Boulders touch the edge(s) of the non-shifted graticules and shifted
-    graticules (combination of left∕right with top∕down or vice-versa).
-    A routine is run to merge boulders intersecting each other (merging...)
+# should replace
+def replace_boulder_intersecting(gdf_boulders_original, gdf_boulders_replace, gdf_edge_intersections, output_filename, output_dir):
 
-    - (6) same as 5 but in the area with only
-    (intersection of non shifted grid and symmetrical difference of two graticules)
-    --> lead to duplicates, and therefore need to be merged...,
-    duplicates in (4) and (6) can be merged at the same time?
+    """
+    VERY IMPORTANT:
+    Should I have a flag, only replace if a "hit" is found for the same?
+    or should I just expect that in order for a detection to be robust,
+    it needs to be detected in multiple predictions?
 
-    OR do like Mathieu say, take the minimum boundary of all boulders within a
-    patch, but it is not going to be that nice...
-
-    :param predictions_no_stride:
-    :param predictions_with_stride:
-    :param graticule_no_stride:
-    :param graticule_with_stride:
-    :param in_raster:
+    :param gdf_boulders_original:
+    :param gdf_boulders_replace:
+    :param gdf_edge_intersections:
+    :param output_filename:
     :return:
     """
 
-    # reading input files + resolution
-    gdf_no_stride = gpd.read_file(predictions_no_stride)
-    gdf_w_stride = gpd.read_file(predictions_with_stride)
-    gra_no_stride = gpd.read_file(graticule_no_stride)
-    gra_w_stride = gpd.read_file(graticule_with_stride)
-    in_res = raster.get_raster_resolution(in_raster)[0]
+    gdf_edge_intersections.boulder_id = gdf_edge_intersections.boulder_id.astype('int')
+    idx_boulders_at_edge = gdf_edge_intersections.boulder_id.unique()
 
-    # boundary of the strided area
-    geom_whole_area = gra_w_stride.geometry.unary_union # return a geometry
+    gdf_boulders_original_at_edge = gdf_boulders_original[gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge)]
+    gdf_boulders_original_not_at_edge = gdf_boulders_original[~(gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge))]
 
-    # symmetrical difference of the two graticules (non-shifted and shifted)
-    gra_edge = gra_no_stride.geometry.unary_union.symmetric_difference(gra_w_stride.geometry.unary_union)
+    # Finding intersecting boulders in other
+    gdf_boulders_replace_intersecting = gpd.overlay(gdf_boulders_replace, gdf_edge_intersections, how='intersection', keep_geom_type=False)
+    idx_boulders_at_edge = gdf_boulders_replace_intersecting.boulder_id_1.unique()
+    gdf_boulders_replace_at_edge = gdf_boulders_replace[gdf_boulders_replace.boulder_id.isin(idx_boulders_at_edge)]
 
-    # polygon to polyline (for no stride and stride graticules)
-    gra_no_stride_line = gra_no_stride.geometry.boundary
-    gra_w_stride_line = gra_w_stride.geometry.boundary
-    gra_no_stride_line_without_outer_edge = gpd.GeoSeries(
-        box(*gra_no_stride_line.total_bounds).boundary.symmetric_difference(
-            gra_no_stride_line.geometry.unary_union), crs=gra_no_stride_line.crs).explode()
-    idx_test = gra_no_stride_line_without_outer_edge.intersects(gra_edge)
-    gra_no_stride_line_without_outer_edge2 = gra_no_stride_line_without_outer_edge[idx_test]
+    gdf = gpd.GeoDataFrame(pd.concat([gdf_boulders_original_not_at_edge, gdf_boulders_replace_at_edge], ignore_index=True))
+    gdf.boulder_id = np.arange(gdf.shape[0])
+    gdf.to_file(output_dir / output_filename)
+    return (gdf)
 
-    # generate buffer of three pixel along this polyline
-    #gra_no_stride_line_buffer = gra_no_stride_line.buffer(in_res*3)
-    #gra_w_stride_line_buffer = gra_w_stride_line.buffer(in_res*3)
+def fix_double_edge_cases(gra_no_stride, gra_w_stride):
+    hot_spot = gpd.overlay(gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_no_stride.boundary)),
+                           gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_w_stride.boundary)),
+                           how='intersection', keep_geom_type=False)
 
-    # no stride edges clipped to the bounding box of the whole stride area (can speed up I think...)
-    intersect_buffer = gra_no_stride_line.geometry.intersection(gra_w_stride.geometry.unary_union)
-    intersect_buffer_union = intersect_buffer.geometry.unary_union
+    hot_spot = hot_spot.explode().drop_duplicates()
+    return (hot_spot)
 
-    # polygon to polylines for graticule with stride
-    intersect_buffer_union_w_stride = gra_w_stride_line.geometry.unary_union
+def replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, gdf_w_stride, gdf_last, output_filename, output_dir):
 
+    """
+    One of the problem is that even if we use with-stride predictions for boulders
+    intersecting the edge of the no-stride grid, there are still places where the
+    same boulders will remain splited. This is true for intersections between the
+    no-stride and with-stride grids. This function merge boulders that touch
+    the two intersections (here referred as hot spot) as a solution.
 
+    :param graticule_no_stride:
+    :param graticule_with_stride:
+    :param gdf_no_stride:
+    :param gdf_w_stride:
+    :param gdf_last:
+    :return:
+    """
 
-    # 1. first select all boulders that are not covered by the shifted graticules (at the edge)
-    idx_edge_boulders = gdf_no_stride.geometry.intersects(gra_edge)
-    gdf_edge_boulders_no_stride = gdf_no_stride[idx_edge_boulders]
-    gdf_other_boulders_no_stride = gdf_no_stride[~idx_edge_boulders]
+    # hotspot for errors
+    hot_spot = fix_double_edge_cases(gra_no_stride, gra_w_stride)
 
-    # select boulders intersecting the no-stride grid (without the extreme edge)
-    # + union and then explode them (easy way to merge them)
-    idx_edge_case1 = gdf_edge_boulders_no_stride.geometry.intersects(
-        gra_no_stride_line_without_outer_edge2.geometry.unary_union)
-    gdf_edge_case1 = gdf_edge_boulders_no_stride[idx_edge_case1]
+    # fixing errors
+    boulders_at_double_edge_ns = gpd.overlay(gdf_no_stride, hot_spot, how='intersection', keep_geom_type=False)
+    boulders_at_double_edge_ws = gpd.overlay(gdf_w_stride, hot_spot, how='intersection', keep_geom_type=False)
+    boulders_at_double_edge_fp = gpd.overlay(gdf_last, hot_spot, how='intersection', keep_geom_type=False)
 
-    # remove the merged boulders and others (to avoid duplicates)
-    gdf_edge_boulders_no_stride = gdf_edge_boulders_no_stride[~idx_edge_case1] # DATA (1)
+    idx1 = boulders_at_double_edge_ns.boulder_id.unique()
+    idx2 = boulders_at_double_edge_ws.boulder_id.unique()
+    idx3 = boulders_at_double_edge_fp.boulder_id.unique()
 
-    # DATA different dataframe, eventually can use overlay to go around this problem
-    # can use intersection.
-    gdf_edge_case1_merged = gpd.GeoDataFrame(gpd.GeoSeries(gdf_edge_case1.geometry.unary_union, crs=gra_no_stride_line.crs).explode()) # DATA (2)
-    gdf_edge_case1_merged = gdf_edge_case1_merged.set_geometry(0, drop=True, crs=gra_no_stride_line.crs).drop(columns=[0])
+    gdf_tom = gpd.GeoDataFrame(pd.concat([gdf_no_stride[gdf_no_stride.boulder_id.isin(idx1)],
+                                          gdf_w_stride[gdf_w_stride.boulder_id.isin(idx2)],
+                                          gdf_last[gdf_last.boulder_id.isin(idx3)]], ignore_index=True))
 
-    # 2.
-    # continue to work from gdf_other_boulders_no_stride
-    # should select_by_loc_no_stride include the outer boundary? I don't think so!
-    # select polygon intersecting this buffer polygon in no and with stride datasets
-    # this step is extremely slow (can be done much more easily with sym difference..)
-    select_by_loc_no_stride = gdf_other_boulders_no_stride.geometry.intersects(intersect_buffer_union)
-    select_by_loc_w_stride = gdf_w_stride.geometry.intersects(intersect_buffer_union)
+    gdf_double_edge = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gdf_tom.geometry.unary_union, crs=gdf_no_stride.crs)).explode()
+    gdf_not_double_edge = gdf_last[~(gdf_last.boulder_id.isin(idx3))]
+    gdf = gpd.GeoDataFrame(pd.concat([gdf_double_edge, gdf_not_double_edge], ignore_index=True))
+    gdf.boulder_id = np.arange(gdf.shape[0])
+    gdf.to_file(output_dir / output_filename)
+    return (gdf)
 
-    #select_by_loc_w_stride_double = gdf_w_stride.geometry.intersects(
-    #    intersect_buffer_union) & gdf_w_stride.geometry.intersects(intersect_buffer_union_w_stride)
+def merging_overlapping_boulders(gdf_final, output_filename, output_dir):
 
-    # select corresponding boulders in shifted graticules (2)
-    edge_boulders_w_stride = gdf_w_stride[select_by_loc_w_stride] # DATA (3)
+    """
+    This function merge all of overlapping features that intersect each other,
+    and have more than 50% overlap between the smallest and the largest polygon
+    of the overlapping features. This function works with multiple polygons if
+    all polygons intersect each other.
 
-    # select inverse of no stride datasets (1)
-    boulders_not_at_edge_no_stride = gdf_other_boulders_no_stride[~select_by_loc_no_stride] #DATA (4)
+    For example if you have polygons A, B and C, A being the largest polygon,
+    and that AB, AC and BC intersect each other, all good.
 
-    # let's save the method we use to correct the data
-    gdf_edge_boulders_no_stride["method"] = 1
-    gdf_edge_case1_merged["method"] = 2
-    edge_boulders_w_stride["method"] = 3
-    boulders_not_at_edge_no_stride["method"] = 4
+    If B intersects A, but C intersects only B, it can
+    (if overlap is more than 50%) potentially result in two merged polygons. So,
+    you still may have overlapping features at the end... but it should (hopefully)
+    be for a very tiny portion of boulders...
 
-    # FINAL add selection of with stride datasets
-    gdf_final = gpd.GeoDataFrame(pd.concat([gdf_edge_boulders_no_stride, gdf_edge_case1_merged, edge_boulders_w_stride, boulders_not_at_edge_no_stride], ignore_index=True))
-    gdf_final["boulder_id"] = np.arange(1, gdf_final.shape[0] + 1)
+    :param gdf_final:
+    :return:
+    """
 
-    # need additional cleaning
-    # There are cases where both no-stride and stride predictions are located at
-    # an edge
-
-    # + cases where overlapping (if overlapping between intersect more than X%)
-    # merge them together... Differences or symmetric differences
     overlapping = gpd.overlay(gdf_final, gdf_final, how='intersection', keep_geom_type=False)
     overlapping = overlapping[overlapping.boulder_id_1 != overlapping.boulder_id_2]
 
     # line and points and other stuff do not represent a good overlap
-    overlapping = overlapping[np.logical_or(overlapping.geometry.geom_type == "Polygon",
-                          overlapping.geometry.geom_type == "MultiPolygon")]
+    overlapping = overlapping[np.logical_or(overlapping.geometry.geom_type == "Polygon", overlapping.geometry.geom_type == "MultiPolygon")]
 
-    boulder_idx = list(overlapping.boulder_id_1.values) + list(overlapping.boulder_id_2.values)
-    gdfb = gdf_final[gdf_final.boulder_id.isin(boulder_idx)]  # the inverse can be taken for non-overlapping
+    boulder_idx = list(overlapping.boulder_id_1.values)
+    gdf_overlap = gdf_final[gdf_final.boulder_id.isin(boulder_idx)]
+    gdf_overlap["area"] = gdf_overlap.geometry.area
+    gdf_non_overlapping = gdf_final[~(gdf_final.boulder_id.isin(boulder_idx))] # data, the inverse can be taken for non-overlapping
 
-    # what if multiple overlap.....
+    # overlapping contains combination A and B and B and A (which is the same)
+    # we get rid of it by multiplying boulder_id_1 by boulder_id_2
+    # it creates an unique combination, which we use to drop duplicates
+    # combinations
+    overlapping["multi"] = (overlapping.boulder_id_1 + 1) * (overlapping.boulder_id_2 + 1)
+    overlapping.drop_duplicates(subset="multi", keep='first', inplace=True)
+    overlapping = overlapping.drop(columns=['multi'])
 
-    # check one by one (for twos)
-    # if overlap add geometry to a new dataframe, list?
-    # if not re-add geometries as they were at the start (separated)
+    merge_list = []
+    geom_of_merged = []
 
-    # for three or more... (maybe intersect of all of them, and similar? or same as two but step-wise?)
+    # looping through potential combination of boulders that can be merged
+    for index, row in tqdm(overlapping.iterrows(), total=overlapping.shape[0]):
+        gdf_selection = gdf_overlap[gdf_overlap.boulder_id.isin([row.boulder_id_1, row.boulder_id_2])]
+        gdf_selection = gdf_selection.sort_values(by=["area"])
+        value = gdf_selection.iloc[0].geometry.intersection(
+            gdf_selection.iloc[1].geometry).area / gdf_selection.iloc[0].geometry.area
+        if value > 0.50:
+            merge_list.append(True)
+            geom_of_merged.append(gdf_selection.geometry.unary_union)
+        else:
+            merge_list.append(False)
+            geom_of_merged.append(0)
 
-    # save it to a new shapefile
+    overlapping["is_merged"] = merge_list
+    overlapping["geom_merged"] = geom_of_merged
+    overlapping["geometry"] = overlapping["geom_merged"]
+    overlapping = overlapping.drop(columns=["geom_merged"])
+
+    overlapping_tbm = overlapping[overlapping["is_merged"] == True]
+    not_overlapping = overlapping[overlapping["is_merged"] == False]
+
+    idx_not_overlapping = sorted(list(not_overlapping.boulder_id_1.unique()) + list(not_overlapping.boulder_id_2.unique()))
+    gdf_overlap_but_not = gdf_overlap[gdf_overlap.boulder_id.isin(idx_not_overlapping)]  # DATA
+
+    # need to drop a few values
+    gdf_non_overlapping = gdf_non_overlapping[gdf_non_overlapping.columns[gdf_non_overlapping.columns.isin(['geometry', 'boulder_id'])]]
+    overlapping_tbm = overlapping_tbm[overlapping_tbm.columns[overlapping_tbm.columns.isin(['geometry'])]]
+    overlapping_tbm["boulder_id"] = 0
+    gdf_overlap_but_not = gdf_overlap_but_not[gdf_overlap_but_not.columns[gdf_overlap_but_not.columns.isin(['geometry'])]]
+    gdf_overlap_but_not["boulder_id"] = 0
+
+    gdf = gpd.GeoDataFrame(pd.concat([gdf_non_overlapping, overlapping_tbm, gdf_overlap_but_not], ignore_index=True))
+    gdf.boulder_id = np.arange(gdf.shape[0])
+    gdf.to_file(output_dir / output_filename)
+    return (gdf)
+
+def fix_edge_cases(predictions_no_stride, predictions_with_stride,
+                       predictions_top_bottom, predictions_left_right,
+                       graticule_no_stride, graticule_with_stride, output_dir):
+
+    output_dir = Path(output_dir)
+
+    gdf_no_stride = gpd.read_file(predictions_no_stride)
+    gdf_w_stride = gpd.read_file(predictions_with_stride)
+    gdf_left_right = gpd.read_file(predictions_left_right)
+    gdf_top_bottom = gpd.read_file(predictions_top_bottom)
+
+    gra_no_stride = gpd.read_file(graticule_no_stride)
+    gra_w_stride = gpd.read_file(graticule_with_stride)
+
+    gdf_no_stride["boulder_id"] = gdf_no_stride["boulder_id"].values.astype('int')
+    gdf_w_stride["boulder_id"] = gdf_w_stride["boulder_id"].values.astype('int')
+    gdf_left_right["boulder_id"] = gdf_left_right["boulder_id"].values.astype('int')
+    gdf_top_bottom["boulder_id"] = gdf_top_bottom["boulder_id"].values.astype('int')
+
+    output_filename = ("edge-lines-center.shp", "edge-lines-left-right.shp", "edge-lines-top-bottom.shp")
+    (gra_center, gra_edge_left_right_final,gra_edge_top_bottom_final) = geometry_for_inference(gra_no_stride, output_filename, output_dir)
+
+    lines_center = lines_where_boulders_intersect_edges(gdf_no_stride, gra_center, 'lines-where-boulder-intersects-center.shp', output_dir)
+    lines_topbottom = lines_where_boulders_intersect_edges(gdf_no_stride, gra_edge_top_bottom_final, 'lines-where-boulder-intersects-top-bottom.shp', output_dir)
+    lines_leftright = lines_where_boulders_intersect_edges(gdf_no_stride, gra_edge_left_right_final, 'lines-where-boulder-intersects-left-right.shp', output_dir)
+
+    gdf1 = replace_boulder_intersecting(gdf_no_stride, gdf_w_stride, lines_center, "preliminary-predictions.shp", output_dir)
+    gdf2 = replace_boulder_intersecting(gdf1, gdf_top_bottom, lines_topbottom, "preliminary-predictions.shp", output_dir)
+    gdf3 = replace_boulder_intersecting(gdf2, gdf_left_right, lines_leftright, "preliminary-predictions.shp", output_dir)
+    gdf_degde = replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, gdf_w_stride, gdf3, "preliminary-predictions.shp", output_dir)
+    gdf_final = merging_overlapping_boulders(gdf_degde, "predictions-including-edge-fix.shp", output_dir)
+    return gdf_final
 
 
+def quickfix_invalid_geometry(boulders_shp):
+    gdf_boulders = gpd.read_file(boulders_shp)
+    valid_geom_idx = gdf_boulders.geometry.is_valid
+
+    if ~valid_geom_idx.all():
+        n = gdf_boulders[valid_geom_idx == False].shape[0]
+        print(str(n) + " invalid geometry(ies) detected")
+        gdf_valid = gdf_boulders[valid_geom_idx]
+        gdf_invalid = gdf_boulders[~valid_geom_idx]
+        gdf_invalid["geometry"] = gdf_invalid.geometry.buffer(0)
+        gdf_boulders = gpd.GeoDataFrame(
+            pd.concat([gdf_valid, gdf_invalid], ignore_index=False))
+    else:
+        None
+    gdf_boulders.to_file(boulders_shp)
+    return (gdf_boulders)

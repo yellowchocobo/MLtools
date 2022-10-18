@@ -18,7 +18,7 @@ from pathlib import Path
 # TODO: save to shapefile (issues if working with different coordinates!) need to
 # TODO: save early in the process (before the concatenation)
 # should probably be moved to grid.py
-def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name, stride=False, add_together=False):
+def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name, stride=(0,0)):
 
     """
 
@@ -34,7 +34,7 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, globa_g
     pickle_name = globa_graticule_name.with_name(globa_graticule_name.stem + ".pkl")
     res = raster.get_raster_resolution(in_raster)[0]
 
-    (windows, transforms, bounds) = raster.tile_windows(in_raster, block_width, block_height, stride, add_together)
+    (windows, transforms, bounds) = raster.tile_windows(in_raster, block_width, block_height, stride)
 
     polygons = [shapely.geometry.box(l, b, r, t) for l, b, r, t in bounds]
     tile_id = [i for i in range(len(bounds))]
@@ -229,9 +229,9 @@ def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
     return (df_selection_tiles, gdf_selection_tiles_updated)
 
 
-def folder_structure(dataset_directory):
+def folder_structure(df, dataset_directory):
     dataset_directory = Path(dataset_directory)
-    folders = ["train", "validation", "test"]
+    folders = list(df["dataset"].unique())
     sub_folders = ["images", "labels"]
 
     for f in folders:
@@ -242,7 +242,7 @@ def folder_structure(dataset_directory):
 def tiling_raster_from_dataframe(df_selection_tiles, dataset_directory, block_width, block_height):
 
     dataset_directory = Path(dataset_directory)
-    folder_structure(dataset_directory) # ensure folders are created
+    folder_structure(df_selection_tiles, dataset_directory) # ensure folders are created
 
     for index, row in tqdm(df_selection_tiles.iterrows(), total=df_selection_tiles.shape[0]):
 
