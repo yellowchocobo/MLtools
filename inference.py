@@ -149,6 +149,7 @@ def geometry_for_inference(gra_no_stride, output_filename, output_dir):
 
     # ---------------------------------------------------------------------------
     # Generating edges as polyline for the center parts of the image
+    print("...generating geometries for correcting predictions located at edges...")
     gra_center = gra_no_stride.geometry.bounds
     gra_center["tile_id"] = gra_no_stride.tile_id.values
     a = (gra_center.minx != gra_no_stride.geometry.total_bounds[0]) & (
@@ -260,7 +261,7 @@ def replace_boulder_intersecting(gdf_boulders_original, gdf_boulders_replace, gd
     :param output_filename:
     :return:
     """
-
+    print("...replacing boulders at edge...")
     gdf_edge_intersections.boulder_id = gdf_edge_intersections.boulder_id.astype('int')
     idx_boulders_at_edge = gdf_edge_intersections.boulder_id.unique()
 
@@ -301,7 +302,7 @@ def replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, 
     :param gdf_last:
     :return:
     """
-
+    print("...replacing boulders that intersects no- and with- stride graticules...")
     # hotspot for errors
     hot_spot = fix_double_edge_cases(gra_no_stride, gra_w_stride)
 
@@ -344,7 +345,7 @@ def merging_overlapping_boulders(gdf_final, output_filename, output_dir):
     :param gdf_final:
     :return:
     """
-
+    print("...merging overlapping boulders...")
     overlapping = gpd.overlay(gdf_final, gdf_final, how='intersection', keep_geom_type=False)
     overlapping = overlapping[overlapping.boulder_id_1 != overlapping.boulder_id_2]
 
@@ -438,6 +439,7 @@ def fix_edge_cases(predictions_no_stride, predictions_with_stride,
 
 
 def quickfix_invalid_geometry(boulders_shp):
+    print ("...fixing invalid geometries...")
     gdf_boulders = gpd.read_file(boulders_shp)
     valid_geom_idx = gdf_boulders.geometry.is_valid
 
