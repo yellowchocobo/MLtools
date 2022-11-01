@@ -103,6 +103,17 @@ def load_yaml(filepath: Union[str, Path]) -> Any:
 
 def training_DatasetMapper(config_file, config_file_complete, augmentation_file):
 
+    use_cuda = torch.cuda.is_available()
+    if use_cuda:
+        print('__CUDNN VERSION:', torch.backends.cudnn.version())
+        print('__Number CUDA Devices:', torch.cuda.device_count())
+        print('__CUDA Device Name:', torch.cuda.get_device_name(0))
+        print('__CUDA Device Total Memory [GB]:',
+              torch.cuda.get_device_properties(0).total_memory / 1e9)
+
+    device = "cuda" if use_cuda else "cpu"
+    print("Device: ", device)
+
     def build_augmentation(cfg, is_train):
         """
         Create a list of default :class:`Augmentation` from config.
@@ -370,7 +381,7 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
       f.write(cfg.dump())
 
     cfg.aug_kwargs = CN(flags.aug_kwargs)  # pass aug_kwargs to cfg
-
+    cfg.MODEL.DEVICE = device
 
     # training
     trainer = MyTrainer(cfg)
@@ -383,6 +394,17 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
 
 
 def training_AlbumentMapper(config_file, config_file_complete, augmentation_file):
+
+    use_cuda = torch.cuda.is_available()
+    if use_cuda:
+        print('__CUDNN VERSION:', torch.backends.cudnn.version())
+        print('__Number CUDA Devices:', torch.cuda.device_count())
+        print('__CUDA Device Name:', torch.cuda.get_device_name(0))
+        print('__CUDA Device Total Memory [GB]:',
+              torch.cuda.get_device_properties(0).total_memory / 1e9)
+
+    device = "cuda" if use_cuda else "cpu"
+    print("Device: ", device)
 
     class AlbumentationsMapper:
         """Mapper which uses `albumentations` augmentations"""
@@ -526,6 +548,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
         f.write(cfg.dump())
 
     cfg.aug_kwargs = CN(flags.aug_kwargs)  # pass aug_kwargs to cfg
+    cfg.MODEL.DEVICE = device
 
     # training
     trainer = MyTrainer(cfg)
