@@ -22,7 +22,7 @@ from tabulate import tabulate
 from detectron2.utils.logger import setup_logger
 from detectron2.config import get_cfg
 from detectron2.data import detection_utils as utils
-from detectron2.evaluation import COCOEvaluator
+from detectron2.evaluation import DatasetEvaluator
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
 from detectron2.engine import DefaultPredictor, DefaultTrainer, launch
 from detectron2.engine.hooks import HookBase
@@ -41,8 +41,6 @@ from detectron2.data.datasets.coco import convert_to_coco_json
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import create_small_table
-
-from .evaluator import DatasetEvaluator
 
 try:
     from detectron2.evaluation.fast_eval_api import COCOeval_opt
