@@ -20,7 +20,7 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from tabulate import tabulate
 from detectron2.utils.logger import setup_logger
-from detectron2.config import get_cfg
+from detectron2.config import get_cfg, CfgNode
 from detectron2.data import detection_utils as utils
 from detectron2.evaluation import DatasetEvaluator
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
@@ -79,7 +79,7 @@ def masks2polygons(masks):
 def augments(aug_kwargs):
     aug_list = []
     for key in aug_kwargs:
-        if key == "OneOf":
+        if key.startswith("OneOf"):
             OneOf_list = []
             aug_oneOf = aug_kwargs[key].get("transforms")
             prob_oneOf = {'p':aug_kwargs[key].get("p")}
@@ -322,14 +322,117 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
 
             return dataset_dict
 
-    class COCOEvaluator(DatasetEvaluator):
+    """
+    Original code from https://github.com/cocodataset/cocoapi/blob/8c9bcc3cf640524c4c20a9c40e89cb6a2f2fa0e9/PythonAPI/pycocotools/cocoeval.py
+    Just modified to show AP@40
+    """
+
+    def boulder_summarize(self):
+        '''
+        Compute and display summary metrics for evaluation results.
+        Note this functin can *only* be applied on the default parameter setting
+        '''
+
+        def _summarize(ap=1, iouThr=None, areaRng='all', maxDets=100):
+            p = self.params
+            iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
+            titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
+            typeStr = '(AP)' if ap == 1 else '(AR)'
+            iouStr = '{:0.2f}:{:0.2f}'.format(p.iouThrs[0], p.iouThrs[-1]) \
+                if iouThr is None else '{:0.2f}'.format(iouThr)
+
+            aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
+            mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
+            if ap == 1:
+                # dimension of precision: [TxRxKxAxM]
+                s = self.eval['precision']
+                # IoU
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                s = s[:, :, :, aind, mind]
+            else:
+                # dimension of recall: [TxKxAxM]
+                s = self.eval['recall']
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                s = s[:, :, aind, mind]
+            if len(s[s > -1]) == 0:
+                mean_s = -1
+            else:
+                mean_s = np.mean(s[s > -1])
+            print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets,
+                              mean_s))
+            return mean_s
+
+        def _summarizeDets():
+            stats = np.zeros((18,))
+            stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
+            stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
+            stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
+            stats[3] = _summarize(1, areaRng='small',
+                                  maxDets=self.params.maxDets[2])
+            stats[4] = _summarize(1, areaRng='medium',
+                                  maxDets=self.params.maxDets[2])
+            stats[5] = _summarize(1, areaRng='large',
+                                  maxDets=self.params.maxDets[2])
+            stats[6] = _summarize(1, iouThr=.5, areaRng='small',
+                                  maxDets=self.params.maxDets[2])
+            stats[7] = _summarize(1, iouThr=.5, areaRng='medium',
+                                  maxDets=self.params.maxDets[2])
+            stats[8] = _summarize(1, iouThr=.5, areaRng='large',
+                                  maxDets=self.params.maxDets[2])
+            stats[9] = _summarize(0, maxDets=self.params.maxDets[0])
+            stats[10] = _summarize(0, maxDets=self.params.maxDets[1])
+            stats[11] = _summarize(0, maxDets=self.params.maxDets[2])
+            stats[12] = _summarize(0, areaRng='small',
+                                   maxDets=self.params.maxDets[2])
+            stats[13] = _summarize(0, areaRng='medium',
+                                   maxDets=self.params.maxDets[2])
+            stats[14] = _summarize(0, areaRng='large',
+                                   maxDets=self.params.maxDets[2])
+            stats[15] = _summarize(0, iouThr=.5, areaRng='small',
+                                   maxDets=self.params.maxDets[2])
+            stats[16] = _summarize(0, iouThr=.5, areaRng='medium',
+                                   maxDets=self.params.maxDets[2])
+            stats[17] = _summarize(0, iouThr=.5, areaRng='large',
+                                   maxDets=self.params.maxDets[2])
+            return stats
+
+        def _summarizeKps():
+            stats = np.zeros((10,))
+            stats[0] = _summarize(1, maxDets=20)
+            stats[1] = _summarize(1, maxDets=20, iouThr=.5)
+            stats[2] = _summarize(1, maxDets=20, iouThr=.75)
+            stats[3] = _summarize(1, maxDets=20, areaRng='medium')
+            stats[4] = _summarize(1, maxDets=20, areaRng='large')
+            stats[5] = _summarize(0, maxDets=20)
+            stats[6] = _summarize(0, maxDets=20, iouThr=.5)
+            stats[7] = _summarize(0, maxDets=20, iouThr=.75)
+            stats[8] = _summarize(0, maxDets=20, areaRng='medium')
+            stats[9] = _summarize(0, maxDets=20, areaRng='large')
+            return stats
+
+        if not self.eval:
+            raise Exception('Please run accumulate() first')
+        iouType = self.params.iouType
+        if iouType == 'segm' or iouType == 'bbox':
+            summarize = _summarizeDets
+        elif iouType == 'keypoints':
+            summarize = _summarizeKps
+        self.stats = summarize()
+
+    print("HACKING: overriding COCOeval.summarize = boulder_summarize...")
+    COCOeval.summarize = boulder_summarize
+
+    class BoulderEvaluator(DatasetEvaluator):
         """
         Evaluate AR for object proposals, AP for instance detection/segmentation, AP
         for keypoint detection outputs using COCO's metrics.
         See http://cocodataset.org/#detection-eval and
         http://cocodataset.org/#keypoints-eval to understand its metrics.
-        The metrics range from 0 to 100 (instead of 0 to 1), where a -1 or NaN means
-        the metric cannot be computed (e.g. due to no predictions made).
+
         In addition to COCO, this evaluator is able to support any bounding box detection,
         instance segmentation, or keypoint detection dataset.
         """
@@ -344,13 +447,14 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
                 max_dets_per_image=None,
                 use_fast_impl=True,
                 kpt_oks_sigmas=(),
-                allow_cached_coco=True,
         ):
             """
             Args:
                 dataset_name (str): name of the dataset to be evaluated.
                     It must have either the following corresponding metadata:
+
                         "json_file": the path to the COCO format annotation
+
                     Or it must be in detectron2's standard dataset format
                     so it can be converted to COCO format automatically.
                 tasks (tuple[str]): tasks that can be evaluated under the given
@@ -361,14 +465,11 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
                     Otherwise, will only evaluate the results in the current process.
                 output_dir (str): optional, an output directory to dump all
                     results predicted on the dataset. The dump contains two files:
-                    1. "instances_predictions.pth" a file that can be loaded with `torch.load` and
-                       contains all the results in the format they are produced by the model.
-                    2. "coco_instances_results.json" a json file in COCO's result format.
-                max_dets_per_image (int): limit on the maximum number of detections per image.
-                    By default in COCO, this limit is to 100, but this can be customized
-                    to be greater, as is needed in evaluation metrics AP fixed and AP pool
-                    (see https://arxiv.org/pdf/2102.01066.pdf)
-                    This doesn't affect keypoint evaluation.
+
+                    1. "instances_predictions.pth" a file in torch serialization
+                       format that contains all the raw original predictions.
+                    2. "coco_instances_results.json" a json file in COCO's result
+                       format.
                 use_fast_impl (bool): use a fast but **unofficial** implementation to compute AP.
                     Although the results should be very close to the official implementation in COCO
                     API, it is still recommended to compute results with the official API for use in
@@ -377,25 +478,12 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
                     See http://cocodataset.org/#keypoints-eval
                     When empty, it will use the defaults in COCO.
                     Otherwise it should be the same length as ROI_KEYPOINT_HEAD.NUM_KEYPOINTS.
-                allow_cached_coco (bool): Whether to use cached coco json from previous validation
-                    runs. You should set this to False if you need to use different validation data.
-                    Defaults to True.
             """
             self._logger = logging.getLogger(__name__)
             self._distributed = distributed
             self._output_dir = output_dir
-
-            if use_fast_impl and (COCOeval_opt is COCOeval):
-                self._logger.info(
-                    "Fast COCO eval is not built. Falling back to official COCO eval.")
-                use_fast_impl = False
             self._use_fast_impl = use_fast_impl
 
-            # COCOeval requires the limit on the number of detections per image (maxDets) to be a list
-            # with at least 3 elements. The default maxDets in COCOeval is [1, 10, 100], in which the
-            # 3rd element (100) is used as the limit on the number of detections per image when
-            # evaluating AP. COCOEvaluator expects an integer for max_dets_per_image, so for COCOeval,
-            # we reformat max_dets_per_image into [1, 10, max_dets_per_image], based on the defaults.
             if max_dets_per_image is None:
                 max_dets_per_image = [1, 10, 100]
             else:
@@ -418,19 +506,15 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
 
             self._metadata = MetadataCatalog.get(dataset_name)
             if not hasattr(self._metadata, "json_file"):
-                if output_dir is None:
-                    raise ValueError(
-                        "output_dir must be provided to COCOEvaluator "
-                        "for datasets not in COCO format."
-                    )
                 self._logger.info(
-                    f"Trying to convert '{dataset_name}' to COCO format ...")
+                    f"'{dataset_name}' is not registered by `register_coco_instances`."
+                    " Therefore trying to convert it to COCO format ..."
+                )
 
                 cache_path = os.path.join(output_dir,
                                           f"{dataset_name}_coco_format.json")
                 self._metadata.json_file = cache_path
-                convert_to_coco_json(dataset_name, cache_path,
-                                     allow_cached=allow_cached_coco)
+                convert_to_coco_json(dataset_name, cache_path)
 
             json_file = PathManager.get_local_path(self._metadata.json_file)
             with contextlib.redirect_stdout(io.StringIO()):
@@ -485,7 +569,7 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
 
             if len(predictions) == 0:
                 self._logger.warning(
-                    "[COCOEvaluator] Did not receive valid predictions.")
+                    "[VinbigdataEvaluator] Did not receive valid predictions.")
                 return {}
 
             if self._output_dir:
@@ -562,8 +646,6 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
                 )
             )
             for task in sorted(tasks):
-                assert task in {"bbox", "segm",
-                                "keypoints"}, f"Got unknown task: {task}!"
                 coco_eval = (
                     _evaluate_predictions_on_coco(
                         self._coco_api,
@@ -632,11 +714,13 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
         def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
             """
             Derive the desired score numbers from summarized COCOeval.
+
             Args:
                 coco_eval (None or COCOEval): None represents no predictions from model.
                 iou_type (str):
                 class_names (None or list[str]): if provided, will use it to predict
                     per-category AP.
+
             Returns:
                 a dict of {metric name: score}
             """
@@ -704,9 +788,11 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
     def instances_to_coco_json(instances, img_id):
         """
         Dump an "Instances" object to a COCO-format json that's used for evaluation.
+
         Args:
             instances (Instances):
             img_id (int): the image id
+
         Returns:
             list[dict]: list of json annotations in COCO format.
         """
@@ -783,10 +869,11 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
             "512-inf": 7,
         }
         area_ranges = [
-            [6 ** 2, 1e5 ** 2],  # all (modified)
-            [6 ** 2, 16 ** 2],  # small (modified)
-            [16 ** 2, 32 ** 2],  # medium (modified)
-            [32 ** 2, 1e5 ** 2],  # large (modified)
+            [6 ** 2, 1e5 ** 2],  # all
+            [6 ** 2, 16 ** 2],  # small
+            # [16 ** 2, 32 ** 2],  # small
+            [16 ** 2, 32 ** 2],  # medium
+            [32 ** 2, 1e5 ** 2],  # large
             [96 ** 2, 128 ** 2],  # 96-128
             [128 ** 2, 256 ** 2],  # 128-256
             [256 ** 2, 512 ** 2],  # 256-512
@@ -822,7 +909,7 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
                 continue
 
             valid_gt_inds = (gt_areas >= area_range[0]) & (
-                        gt_areas <= area_range[1])
+                    gt_areas <= area_range[1])
             gt_boxes = gt_boxes[valid_gt_inds]
 
             num_pos += len(gt_boxes)
@@ -857,7 +944,8 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
             gt_overlaps.append(_gt_overlaps)
         gt_overlaps = (
             torch.cat(gt_overlaps, dim=0) if len(gt_overlaps) else torch.zeros(
-                0, dtype=torch.float32)
+                0,
+                dtype=torch.float32)
         )
         gt_overlaps, _ = torch.sort(gt_overlaps)
 
@@ -865,6 +953,7 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
             step = 0.05
             thresholds = torch.arange(0.5, 0.95 + 1e-5, step,
                                       dtype=torch.float32)
+            # thresholds = torch.arange(0.4, 0.95 + 1e-5, step, dtype=torch.float32)
         recalls = torch.zeros_like(thresholds)
         # compute recall for each iou threshold
         for i, t in enumerate(thresholds):
@@ -880,13 +969,8 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
         }
 
     def _evaluate_predictions_on_coco(
-            coco_gt,
-            coco_results,
-            iou_type,
-            kpt_oks_sigmas=None,
-            use_fast_impl=True,
-            img_ids=None,
-            max_dets_per_image=None,
+            coco_gt, coco_results, iou_type, kpt_oks_sigmas=None,
+            use_fast_impl=True, img_ids=None, max_dets_per_image=None
     ):
         """
         Evaluate the coco results using COCOEval API.
@@ -906,6 +990,12 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
         coco_eval = (COCOeval_opt if use_fast_impl else COCOeval)(coco_gt,
                                                                   coco_dt,
                                                                   iou_type)
+
+        # HACKING: overwrite areaRng
+        coco_eval.params.areaRng = [[6 ** 2, 1e5 ** 2], [6 ** 2, 16 ** 2],
+                                    [16 ** 2, 32 ** 2], [32 ** 2, 1e5 ** 2]]
+        # coco_eval.params.areaRng = [[6 ** 2, 1e5 ** 2], [16 ** 2, 32 ** 2], [16 ** 2, 32 ** 2], [32 ** 2, 1e5 ** 2]]
+
         # For COCO, the default max_dets_per_image is [1, 10, 100].
         if max_dets_per_image is None:
             max_dets_per_image = [1, 10, 100]  # Default from COCOEval
@@ -916,7 +1006,10 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
             # In the case that user supplies a custom input for max_dets_per_image,
             # apply COCOevalMaxDets to evaluate AP with the custom input.
             if max_dets_per_image[2] != 100:
-                coco_eval = COCOevalMaxDets(coco_gt, coco_dt, iou_type)
+                None
+                # coco_eval = COCOevalMaxDets(coco_gt, coco_dt,
+                #                            iou_type)  # this need to be changed
+
         if iou_type != "keypoints":
             coco_eval.params.maxDets = max_dets_per_image
 
@@ -936,7 +1029,7 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
                 next(iter(coco_gt.anns.values()))["keypoints"]) // 3
             num_keypoints_oks = len(coco_eval.params.kpt_oks_sigmas)
             assert num_keypoints_oks == num_keypoints_dt == num_keypoints_gt, (
-                f"[COCOEvaluator] Prediction contain {num_keypoints_dt} keypoints. "
+                f"[BoulderEvaluator] Prediction contain {num_keypoints_dt} keypoints. "
                 f"Ground truth contains {num_keypoints_gt} keypoints. "
                 f"The length of cfg.TEST.KEYPOINT_OKS_SIGMAS is {num_keypoints_oks}. "
                 "They have to agree with each other. For meaning of OKS, please refer to "
@@ -948,107 +1041,6 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
         coco_eval.summarize()
 
         return coco_eval
-
-    class COCOevalMaxDets(COCOeval):
-        """
-        Modified version of COCOeval for evaluating AP with a custom
-        maxDets (by default for COCO, maxDets is 100)
-        """
-
-        def summarize(self):
-            """
-            Compute and display summary metrics for evaluation results given
-            a custom value for  max_dets_per_image
-            """
-
-            def _summarize(ap=1, iouThr=None, areaRng="all", maxDets=100):
-                p = self.params
-                iStr = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
-                titleStr = "Average Precision" if ap == 1 else "Average Recall"
-                typeStr = "(AP)" if ap == 1 else "(AR)"
-                iouStr = (
-                    "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1])
-                    if iouThr is None
-                    else "{:0.2f}".format(iouThr)
-                )
-
-                aind = [i for i, aRng in enumerate(p.areaRngLbl) if
-                        aRng == areaRng]
-                mind = [i for i, mDet in enumerate(p.maxDets) if
-                        mDet == maxDets]
-                if ap == 1:
-                    # dimension of precision: [TxRxKxAxM]
-                    s = self.eval["precision"]
-                    # IoU
-                    if iouThr is not None:
-                        t = np.where(iouThr == p.iouThrs)[0]
-                        s = s[t]
-                    s = s[:, :, :, aind, mind]
-                else:
-                    # dimension of recall: [TxKxAxM]
-                    s = self.eval["recall"]
-                    if iouThr is not None:
-                        t = np.where(iouThr == p.iouThrs)[0]
-                        s = s[t]
-                    s = s[:, :, aind, mind]
-                if len(s[s > -1]) == 0:
-                    mean_s = -1
-                else:
-                    mean_s = np.mean(s[s > -1])
-                print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets,
-                                  mean_s))
-                return mean_s
-
-            def _summarizeDets():
-                stats = np.zeros((12,))
-                # Evaluate AP using the custom limit on maximum detections per image
-                stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
-                stats[1] = _summarize(1, iouThr=0.5,
-                                      maxDets=self.params.maxDets[2])
-                stats[2] = _summarize(1, iouThr=0.75,
-                                      maxDets=self.params.maxDets[2])
-                stats[3] = _summarize(1, areaRng="small",
-                                      maxDets=self.params.maxDets[2])
-                stats[4] = _summarize(1, areaRng="medium",
-                                      maxDets=self.params.maxDets[2])
-                stats[5] = _summarize(1, areaRng="large",
-                                      maxDets=self.params.maxDets[2])
-                stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-                stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-                stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-                stats[9] = _summarize(0, areaRng="small",
-                                      maxDets=self.params.maxDets[2])
-                stats[10] = _summarize(0, areaRng="medium",
-                                       maxDets=self.params.maxDets[2])
-                stats[11] = _summarize(0, areaRng="large",
-                                       maxDets=self.params.maxDets[2])
-                return stats
-
-            def _summarizeKps():
-                stats = np.zeros((10,))
-                stats[0] = _summarize(1, maxDets=20)
-                stats[1] = _summarize(1, maxDets=20, iouThr=0.5)
-                stats[2] = _summarize(1, maxDets=20, iouThr=0.75)
-                stats[3] = _summarize(1, maxDets=20, areaRng="medium")
-                stats[4] = _summarize(1, maxDets=20, areaRng="large")
-                stats[5] = _summarize(0, maxDets=20)
-                stats[6] = _summarize(0, maxDets=20, iouThr=0.5)
-                stats[7] = _summarize(0, maxDets=20, iouThr=0.75)
-                stats[8] = _summarize(0, maxDets=20, areaRng="medium")
-                stats[9] = _summarize(0, maxDets=20, areaRng="large")
-                return stats
-
-            if not self.eval:
-                raise Exception("Please run accumulate() first")
-            iouType = self.params.iouType
-            if iouType == "segm" or iouType == "bbox":
-                summarize = _summarizeDets
-            elif iouType == "keypoints":
-                summarize = _summarizeKps
-            self.stats = summarize()
-
-        def __str__(self):
-            self.summarize()
 
     class MyTrainer(DefaultTrainer):
         @classmethod
@@ -1067,7 +1059,7 @@ def training_DatasetMapper(config_file, config_file_complete, augmentation_file)
         def build_evaluator(cls, cfg, dataset_name):
             output_folder = os.path.join(cfg.OUTPUT_DIR, "coco_eval")
             os.makedirs(output_folder, exist_ok=True)
-            return COCOEvaluator(dataset_name, ("segm",), False,
+            return BoulderEvaluator(dataset_name, ("segm",), False,
                                  output_folder, max_dets_per_image=1000)
 
     @dataclass
@@ -1219,14 +1211,117 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
             return dataset_dict
 
 
-    class COCOEvaluator(DatasetEvaluator):
+    """
+    Original code from https://github.com/cocodataset/cocoapi/blob/8c9bcc3cf640524c4c20a9c40e89cb6a2f2fa0e9/PythonAPI/pycocotools/cocoeval.py
+    Just modified to show AP@40
+    """
+
+    def boulder_summarize(self):
+        '''
+        Compute and display summary metrics for evaluation results.
+        Note this functin can *only* be applied on the default parameter setting
+        '''
+
+        def _summarize(ap=1, iouThr=None, areaRng='all', maxDets=100):
+            p = self.params
+            iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
+            titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
+            typeStr = '(AP)' if ap == 1 else '(AR)'
+            iouStr = '{:0.2f}:{:0.2f}'.format(p.iouThrs[0], p.iouThrs[-1]) \
+                if iouThr is None else '{:0.2f}'.format(iouThr)
+
+            aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
+            mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
+            if ap == 1:
+                # dimension of precision: [TxRxKxAxM]
+                s = self.eval['precision']
+                # IoU
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                s = s[:, :, :, aind, mind]
+            else:
+                # dimension of recall: [TxKxAxM]
+                s = self.eval['recall']
+                if iouThr is not None:
+                    t = np.where(iouThr == p.iouThrs)[0]
+                    s = s[t]
+                s = s[:, :, aind, mind]
+            if len(s[s > -1]) == 0:
+                mean_s = -1
+            else:
+                mean_s = np.mean(s[s > -1])
+            print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets,
+                              mean_s))
+            return mean_s
+
+        def _summarizeDets():
+            stats = np.zeros((18,))
+            stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
+            stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
+            stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
+            stats[3] = _summarize(1, areaRng='small',
+                                  maxDets=self.params.maxDets[2])
+            stats[4] = _summarize(1, areaRng='medium',
+                                  maxDets=self.params.maxDets[2])
+            stats[5] = _summarize(1, areaRng='large',
+                                  maxDets=self.params.maxDets[2])
+            stats[6] = _summarize(1, iouThr=.5, areaRng='small',
+                                  maxDets=self.params.maxDets[2])
+            stats[7] = _summarize(1, iouThr=.5, areaRng='medium',
+                                  maxDets=self.params.maxDets[2])
+            stats[8] = _summarize(1, iouThr=.5, areaRng='large',
+                                  maxDets=self.params.maxDets[2])
+            stats[9] = _summarize(0, maxDets=self.params.maxDets[0])
+            stats[10] = _summarize(0, maxDets=self.params.maxDets[1])
+            stats[11] = _summarize(0, maxDets=self.params.maxDets[2])
+            stats[12] = _summarize(0, areaRng='small',
+                                   maxDets=self.params.maxDets[2])
+            stats[13] = _summarize(0, areaRng='medium',
+                                   maxDets=self.params.maxDets[2])
+            stats[14] = _summarize(0, areaRng='large',
+                                   maxDets=self.params.maxDets[2])
+            stats[15] = _summarize(0, iouThr=.5, areaRng='small',
+                                   maxDets=self.params.maxDets[2])
+            stats[16] = _summarize(0, iouThr=.5, areaRng='medium',
+                                   maxDets=self.params.maxDets[2])
+            stats[17] = _summarize(0, iouThr=.5, areaRng='large',
+                                   maxDets=self.params.maxDets[2])
+            return stats
+
+        def _summarizeKps():
+            stats = np.zeros((10,))
+            stats[0] = _summarize(1, maxDets=20)
+            stats[1] = _summarize(1, maxDets=20, iouThr=.5)
+            stats[2] = _summarize(1, maxDets=20, iouThr=.75)
+            stats[3] = _summarize(1, maxDets=20, areaRng='medium')
+            stats[4] = _summarize(1, maxDets=20, areaRng='large')
+            stats[5] = _summarize(0, maxDets=20)
+            stats[6] = _summarize(0, maxDets=20, iouThr=.5)
+            stats[7] = _summarize(0, maxDets=20, iouThr=.75)
+            stats[8] = _summarize(0, maxDets=20, areaRng='medium')
+            stats[9] = _summarize(0, maxDets=20, areaRng='large')
+            return stats
+
+        if not self.eval:
+            raise Exception('Please run accumulate() first')
+        iouType = self.params.iouType
+        if iouType == 'segm' or iouType == 'bbox':
+            summarize = _summarizeDets
+        elif iouType == 'keypoints':
+            summarize = _summarizeKps
+        self.stats = summarize()
+
+    print("HACKING: overriding COCOeval.summarize = boulder_summarize...")
+    COCOeval.summarize = boulder_summarize
+
+    class BoulderEvaluator(DatasetEvaluator):
         """
         Evaluate AR for object proposals, AP for instance detection/segmentation, AP
         for keypoint detection outputs using COCO's metrics.
         See http://cocodataset.org/#detection-eval and
         http://cocodataset.org/#keypoints-eval to understand its metrics.
-        The metrics range from 0 to 100 (instead of 0 to 1), where a -1 or NaN means
-        the metric cannot be computed (e.g. due to no predictions made).
+
         In addition to COCO, this evaluator is able to support any bounding box detection,
         instance segmentation, or keypoint detection dataset.
         """
@@ -1241,13 +1336,14 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
                 max_dets_per_image=None,
                 use_fast_impl=True,
                 kpt_oks_sigmas=(),
-                allow_cached_coco=True,
         ):
             """
             Args:
                 dataset_name (str): name of the dataset to be evaluated.
                     It must have either the following corresponding metadata:
+
                         "json_file": the path to the COCO format annotation
+
                     Or it must be in detectron2's standard dataset format
                     so it can be converted to COCO format automatically.
                 tasks (tuple[str]): tasks that can be evaluated under the given
@@ -1258,14 +1354,11 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
                     Otherwise, will only evaluate the results in the current process.
                 output_dir (str): optional, an output directory to dump all
                     results predicted on the dataset. The dump contains two files:
-                    1. "instances_predictions.pth" a file that can be loaded with `torch.load` and
-                       contains all the results in the format they are produced by the model.
-                    2. "coco_instances_results.json" a json file in COCO's result format.
-                max_dets_per_image (int): limit on the maximum number of detections per image.
-                    By default in COCO, this limit is to 100, but this can be customized
-                    to be greater, as is needed in evaluation metrics AP fixed and AP pool
-                    (see https://arxiv.org/pdf/2102.01066.pdf)
-                    This doesn't affect keypoint evaluation.
+
+                    1. "instances_predictions.pth" a file in torch serialization
+                       format that contains all the raw original predictions.
+                    2. "coco_instances_results.json" a json file in COCO's result
+                       format.
                 use_fast_impl (bool): use a fast but **unofficial** implementation to compute AP.
                     Although the results should be very close to the official implementation in COCO
                     API, it is still recommended to compute results with the official API for use in
@@ -1274,25 +1367,12 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
                     See http://cocodataset.org/#keypoints-eval
                     When empty, it will use the defaults in COCO.
                     Otherwise it should be the same length as ROI_KEYPOINT_HEAD.NUM_KEYPOINTS.
-                allow_cached_coco (bool): Whether to use cached coco json from previous validation
-                    runs. You should set this to False if you need to use different validation data.
-                    Defaults to True.
             """
             self._logger = logging.getLogger(__name__)
             self._distributed = distributed
             self._output_dir = output_dir
-
-            if use_fast_impl and (COCOeval_opt is COCOeval):
-                self._logger.info(
-                    "Fast COCO eval is not built. Falling back to official COCO eval.")
-                use_fast_impl = False
             self._use_fast_impl = use_fast_impl
 
-            # COCOeval requires the limit on the number of detections per image (maxDets) to be a list
-            # with at least 3 elements. The default maxDets in COCOeval is [1, 10, 100], in which the
-            # 3rd element (100) is used as the limit on the number of detections per image when
-            # evaluating AP. COCOEvaluator expects an integer for max_dets_per_image, so for COCOeval,
-            # we reformat max_dets_per_image into [1, 10, max_dets_per_image], based on the defaults.
             if max_dets_per_image is None:
                 max_dets_per_image = [1, 10, 100]
             else:
@@ -1315,19 +1395,15 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
 
             self._metadata = MetadataCatalog.get(dataset_name)
             if not hasattr(self._metadata, "json_file"):
-                if output_dir is None:
-                    raise ValueError(
-                        "output_dir must be provided to COCOEvaluator "
-                        "for datasets not in COCO format."
-                    )
                 self._logger.info(
-                    f"Trying to convert '{dataset_name}' to COCO format ...")
+                    f"'{dataset_name}' is not registered by `register_coco_instances`."
+                    " Therefore trying to convert it to COCO format ..."
+                )
 
                 cache_path = os.path.join(output_dir,
                                           f"{dataset_name}_coco_format.json")
                 self._metadata.json_file = cache_path
-                convert_to_coco_json(dataset_name, cache_path,
-                                     allow_cached=allow_cached_coco)
+                convert_to_coco_json(dataset_name, cache_path)
 
             json_file = PathManager.get_local_path(self._metadata.json_file)
             with contextlib.redirect_stdout(io.StringIO()):
@@ -1382,7 +1458,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
 
             if len(predictions) == 0:
                 self._logger.warning(
-                    "[COCOEvaluator] Did not receive valid predictions.")
+                    "[VinbigdataEvaluator] Did not receive valid predictions.")
                 return {}
 
             if self._output_dir:
@@ -1459,8 +1535,6 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
                 )
             )
             for task in sorted(tasks):
-                assert task in {"bbox", "segm",
-                                "keypoints"}, f"Got unknown task: {task}!"
                 coco_eval = (
                     _evaluate_predictions_on_coco(
                         self._coco_api,
@@ -1529,11 +1603,13 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
         def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
             """
             Derive the desired score numbers from summarized COCOeval.
+
             Args:
                 coco_eval (None or COCOEval): None represents no predictions from model.
                 iou_type (str):
                 class_names (None or list[str]): if provided, will use it to predict
                     per-category AP.
+
             Returns:
                 a dict of {metric name: score}
             """
@@ -1601,9 +1677,11 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
     def instances_to_coco_json(instances, img_id):
         """
         Dump an "Instances" object to a COCO-format json that's used for evaluation.
+
         Args:
             instances (Instances):
             img_id (int): the image id
+
         Returns:
             list[dict]: list of json annotations in COCO format.
         """
@@ -1680,10 +1758,11 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
             "512-inf": 7,
         }
         area_ranges = [
-            [6 ** 2, 1e5 ** 2],  # all (modified)
-            [6 ** 2, 16 ** 2],  # small (modified)
-            [16 ** 2, 32 ** 2],  # medium (modified)
-            [32 ** 2, 1e5 ** 2],  # large (modified)
+            [6 ** 2, 1e5 ** 2],  # all
+            [6 ** 2, 16 ** 2],  # small
+            # [16 ** 2, 32 ** 2],  # small
+            [16 ** 2, 32 ** 2],  # medium
+            [32 ** 2, 1e5 ** 2],  # large
             [96 ** 2, 128 ** 2],  # 96-128
             [128 ** 2, 256 ** 2],  # 128-256
             [256 ** 2, 512 ** 2],  # 256-512
@@ -1719,7 +1798,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
                 continue
 
             valid_gt_inds = (gt_areas >= area_range[0]) & (
-                        gt_areas <= area_range[1])
+                    gt_areas <= area_range[1])
             gt_boxes = gt_boxes[valid_gt_inds]
 
             num_pos += len(gt_boxes)
@@ -1754,7 +1833,8 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
             gt_overlaps.append(_gt_overlaps)
         gt_overlaps = (
             torch.cat(gt_overlaps, dim=0) if len(gt_overlaps) else torch.zeros(
-                0, dtype=torch.float32)
+                0,
+                dtype=torch.float32)
         )
         gt_overlaps, _ = torch.sort(gt_overlaps)
 
@@ -1762,6 +1842,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
             step = 0.05
             thresholds = torch.arange(0.5, 0.95 + 1e-5, step,
                                       dtype=torch.float32)
+            # thresholds = torch.arange(0.4, 0.95 + 1e-5, step, dtype=torch.float32)
         recalls = torch.zeros_like(thresholds)
         # compute recall for each iou threshold
         for i, t in enumerate(thresholds):
@@ -1777,13 +1858,8 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
         }
 
     def _evaluate_predictions_on_coco(
-            coco_gt,
-            coco_results,
-            iou_type,
-            kpt_oks_sigmas=None,
-            use_fast_impl=True,
-            img_ids=None,
-            max_dets_per_image=None,
+            coco_gt, coco_results, iou_type, kpt_oks_sigmas=None,
+            use_fast_impl=True, img_ids=None, max_dets_per_image=None
     ):
         """
         Evaluate the coco results using COCOEval API.
@@ -1803,6 +1879,12 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
         coco_eval = (COCOeval_opt if use_fast_impl else COCOeval)(coco_gt,
                                                                   coco_dt,
                                                                   iou_type)
+
+        # HACKING: overwrite areaRng
+        coco_eval.params.areaRng = [[6 ** 2, 1e5 ** 2], [6 ** 2, 16 ** 2],
+                                    [16 ** 2, 32 ** 2], [32 ** 2, 1e5 ** 2]]
+        # coco_eval.params.areaRng = [[6 ** 2, 1e5 ** 2], [16 ** 2, 32 ** 2], [16 ** 2, 32 ** 2], [32 ** 2, 1e5 ** 2]]
+
         # For COCO, the default max_dets_per_image is [1, 10, 100].
         if max_dets_per_image is None:
             max_dets_per_image = [1, 10, 100]  # Default from COCOEval
@@ -1813,7 +1895,10 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
             # In the case that user supplies a custom input for max_dets_per_image,
             # apply COCOevalMaxDets to evaluate AP with the custom input.
             if max_dets_per_image[2] != 100:
-                coco_eval = COCOevalMaxDets(coco_gt, coco_dt, iou_type)
+                None
+                # coco_eval = COCOevalMaxDets(coco_gt, coco_dt,
+                #                            iou_type)  # this need to be changed
+
         if iou_type != "keypoints":
             coco_eval.params.maxDets = max_dets_per_image
 
@@ -1833,7 +1918,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
                 next(iter(coco_gt.anns.values()))["keypoints"]) // 3
             num_keypoints_oks = len(coco_eval.params.kpt_oks_sigmas)
             assert num_keypoints_oks == num_keypoints_dt == num_keypoints_gt, (
-                f"[COCOEvaluator] Prediction contain {num_keypoints_dt} keypoints. "
+                f"[BoulderEvaluator] Prediction contain {num_keypoints_dt} keypoints. "
                 f"Ground truth contains {num_keypoints_gt} keypoints. "
                 f"The length of cfg.TEST.KEYPOINT_OKS_SIGMAS is {num_keypoints_oks}. "
                 "They have to agree with each other. For meaning of OKS, please refer to "
@@ -1845,107 +1930,6 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
         coco_eval.summarize()
 
         return coco_eval
-
-    class COCOevalMaxDets(COCOeval):
-        """
-        Modified version of COCOeval for evaluating AP with a custom
-        maxDets (by default for COCO, maxDets is 100)
-        """
-
-        def summarize(self):
-            """
-            Compute and display summary metrics for evaluation results given
-            a custom value for  max_dets_per_image
-            """
-
-            def _summarize(ap=1, iouThr=None, areaRng="all", maxDets=100):
-                p = self.params
-                iStr = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
-                titleStr = "Average Precision" if ap == 1 else "Average Recall"
-                typeStr = "(AP)" if ap == 1 else "(AR)"
-                iouStr = (
-                    "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1])
-                    if iouThr is None
-                    else "{:0.2f}".format(iouThr)
-                )
-
-                aind = [i for i, aRng in enumerate(p.areaRngLbl) if
-                        aRng == areaRng]
-                mind = [i for i, mDet in enumerate(p.maxDets) if
-                        mDet == maxDets]
-                if ap == 1:
-                    # dimension of precision: [TxRxKxAxM]
-                    s = self.eval["precision"]
-                    # IoU
-                    if iouThr is not None:
-                        t = np.where(iouThr == p.iouThrs)[0]
-                        s = s[t]
-                    s = s[:, :, :, aind, mind]
-                else:
-                    # dimension of recall: [TxKxAxM]
-                    s = self.eval["recall"]
-                    if iouThr is not None:
-                        t = np.where(iouThr == p.iouThrs)[0]
-                        s = s[t]
-                    s = s[:, :, aind, mind]
-                if len(s[s > -1]) == 0:
-                    mean_s = -1
-                else:
-                    mean_s = np.mean(s[s > -1])
-                print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets,
-                                  mean_s))
-                return mean_s
-
-            def _summarizeDets():
-                stats = np.zeros((12,))
-                # Evaluate AP using the custom limit on maximum detections per image
-                stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
-                stats[1] = _summarize(1, iouThr=0.5,
-                                      maxDets=self.params.maxDets[2])
-                stats[2] = _summarize(1, iouThr=0.75,
-                                      maxDets=self.params.maxDets[2])
-                stats[3] = _summarize(1, areaRng="small",
-                                      maxDets=self.params.maxDets[2])
-                stats[4] = _summarize(1, areaRng="medium",
-                                      maxDets=self.params.maxDets[2])
-                stats[5] = _summarize(1, areaRng="large",
-                                      maxDets=self.params.maxDets[2])
-                stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-                stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-                stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-                stats[9] = _summarize(0, areaRng="small",
-                                      maxDets=self.params.maxDets[2])
-                stats[10] = _summarize(0, areaRng="medium",
-                                       maxDets=self.params.maxDets[2])
-                stats[11] = _summarize(0, areaRng="large",
-                                       maxDets=self.params.maxDets[2])
-                return stats
-
-            def _summarizeKps():
-                stats = np.zeros((10,))
-                stats[0] = _summarize(1, maxDets=20)
-                stats[1] = _summarize(1, maxDets=20, iouThr=0.5)
-                stats[2] = _summarize(1, maxDets=20, iouThr=0.75)
-                stats[3] = _summarize(1, maxDets=20, areaRng="medium")
-                stats[4] = _summarize(1, maxDets=20, areaRng="large")
-                stats[5] = _summarize(0, maxDets=20)
-                stats[6] = _summarize(0, maxDets=20, iouThr=0.5)
-                stats[7] = _summarize(0, maxDets=20, iouThr=0.75)
-                stats[8] = _summarize(0, maxDets=20, areaRng="medium")
-                stats[9] = _summarize(0, maxDets=20, areaRng="large")
-                return stats
-
-            if not self.eval:
-                raise Exception("Please run accumulate() first")
-            iouType = self.params.iouType
-            if iouType == "segm" or iouType == "bbox":
-                summarize = _summarizeDets
-            elif iouType == "keypoints":
-                summarize = _summarizeKps
-            self.stats = summarize()
-
-        def __str__(self):
-            self.summarize()
 
     class MyTrainer(DefaultTrainer):
         @classmethod
@@ -1964,7 +1948,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
         def build_evaluator(cls, cfg, dataset_name):
             output_folder = os.path.join(cfg.OUTPUT_DIR, "coco_eval")
             os.makedirs(output_folder, exist_ok=True)
-            return COCOEvaluator(dataset_name, ("segm",), False, output_folder,
+            return BoulderEvaluator(dataset_name, ("segm",), False, output_folder,
                                  max_dets_per_image=1000)
 
     class ValidationLoss(HookBase):
@@ -2026,9 +2010,3 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
     trainer.resume_or_load(resume=False)
     trainer.train()
 
-    def run():
-        torch.multiprocessing.freeze_support()
-        print('loop')
-
-    if __name__ == '__main__':
-        run()
