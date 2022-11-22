@@ -47,7 +47,6 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
     boulder_id = []
 
     bid = 0
-    iid = 0
 
     for tif in tqdm(sorted(image_dir.glob(search_pattern))):
         #print(tif.name)
