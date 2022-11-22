@@ -1,6 +1,7 @@
 import geopandas as gpd
 import numpy as np
 import rasterio as rio
+import click
 import pandas as pd
 import torch
 import sys
@@ -92,16 +93,34 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
         gdf_empty = gpd.GeoDataFrame(geometry=[])
         gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
 
+@click.command()
+@click.option('--in_raster', required=True, type=str, help='Path to satellite image.')
+@click.option('--config_file', required=True, type=str, help='Path to Detectron2 config file.')
+@click.option('--model_weights', required=True, type=str, help='Path to model weights.')
+@click.option('--device', required=True, type=str, help='choose device, gpu or cpu')
+@click.option('--scores', default=0.5, help='Prediction threshold.')
+@click.option('--search_tif_pattern', default="*.tif", help='Search tif pattern for image patches.')
+@click.option('--block_width', default=512, help='Block width of the image patches.')
+@click.option('--block_height', default=512, help='Block height of the image patches.')
+@click.option('--output_dir', required=True, type=str, help='Path to output directory.')
 def default_predictions(in_raster, config_file, model_weights, device, scores, search_tif_pattern,
-                        graticule_no_stride_p, graticule_with_stride_p, graticule_top_bottom_p,
-                        graticule_left_right_p,
                         block_width, block_height, output_dir):
 
     output_dir = Path(output_dir)
+    in_raster = Path(in_raster)
+    model_weights = Path(model_weights)
+    config_file = Path(config_file)
+
+    # create automatically paths
+    (output_dir / "shp").mkdir(parents=True, exist_ok=True)
+    graticule_no_stride_p = output_dir / "shp" / (in_raster.stem + "-global-tiles-no-stride.shp")
+    graticule_with_stride_p = output_dir / "shp" / (in_raster.stem + "-global-tiles-w-stride.shp")
+    graticule_top_bottom_p = output_dir / "shp" / (in_raster.stem + "-global-tiles-top-bottom.shp")
+    graticule_left_right_p = output_dir / "shp" / (in_raster.stem + "-global-tiles-left-right.shp")
 
     # no stride
     dataset_directory = output_dir / "inference-no-stride" / "images"
-    out_shapefile = output_dir / "predictions-no-stride.shp"
+    out_shapefile = output_dir / "shp" / "predictions-no-stride.shp"
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -112,7 +131,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
 
     # with stride
     dataset_directory = output_dir / "inference-w-stride" / "images"
-    out_shapefile = output_dir / "predictions-w-stride.shp"
+    out_shapefile = output_dir / "shp" / "predictions-w-stride.shp"
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -123,7 +142,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
 
     # top bottom
     dataset_directory = output_dir / "inference-top-bottom" / "images"
-    out_shapefile = output_dir / "predictions-top-bottom.shp"
+    out_shapefile = output_dir / "shp" / "predictions-top-bottom.shp"
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -141,7 +160,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
 
     # left right
     dataset_directory = output_dir / "inference-left-right" / "images"
-    out_shapefile = output_dir / "predictions-left-right.shp"
+    out_shapefile = output_dir / "shp" / "predictions-left-right.shp"
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -157,10 +176,10 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # fixing edge issues
-    predictions_no_stride = output_dir / "predictions-no-stride.shp"
-    predictions_with_stride = output_dir / "predictions-w-stride.shp"
-    predictions_left_right = output_dir / "predictions-left-right.shp"
-    predictions_top_bottom = output_dir / "predictions-top-bottom.shp"
+    predictions_no_stride = output_dir / "shp" / "predictions-no-stride.shp"
+    predictions_with_stride = output_dir / "shp" / "predictions-w-stride.shp"
+    predictions_left_right = output_dir / "shp" / "predictions-left-right.shp"
+    predictions_top_bottom = output_dir / "shp" / "predictions-top-bottom.shp"
 
     # fix invalid geometry (not sure if this work in all cases!)
     __ = quickfix_invalid_geometry(predictions_no_stride)
@@ -171,7 +190,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
     gdf = fix_edge_cases(predictions_no_stride, predictions_with_stride,
                          predictions_top_bottom, predictions_left_right,
                          graticule_no_stride_p, graticule_with_stride_p,
-                         output_dir)
+                         output_dir / "shp")
 
     return gdf
 
@@ -493,3 +512,6 @@ def quickfix_invalid_geometry(boulders_shp):
     else:
         None
     return (gdf_boulders)
+
+if __name__ == '__main__':
+    default_predictions()
