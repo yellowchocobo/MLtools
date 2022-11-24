@@ -80,11 +80,10 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
                 boulder_id.append(bid)
                 bid = bid + 1
 
-    gpd_polygonized_raster = gpd.GeoDataFrame.from_features(geoms,
-                                                            crs=meta["crs"])
-    gpd_polygonized_raster["scores"] = scores_list
-    gpd_polygonized_raster["boulder_id"] = boulder_id
-    if gpd_polygonized_raster.shape[0] > 0:
+    if len(geoms) > 0:
+        gpd_polygonized_raster = gpd.GeoDataFrame.from_features(geoms, crs=meta["crs"])
+        gpd_polygonized_raster["scores"] = scores_list
+        gpd_polygonized_raster["boulder_id"] = boulder_id
         gpd_polygonized_raster.to_file(out_shapefile)
     else:
         schema = {"geometry": "Polygon",
@@ -337,9 +336,18 @@ def fix_double_edge_cases(gra_no_stride, gra_w_stride):
                            gpd.GeoDataFrame(geometry=gpd.GeoSeries(gra_w_stride.boundary)),
                            how='intersection', keep_geom_type=False)
 
-    hot_spot = hot_spot.explode().drop_duplicates()
-    return (hot_spot)
+    # the drop duplicates is extremely slow, so it is better to create two
+    # columns (x and y) and drop duplicated based on it.
+    hot_spot = hot_spot.explode(ignore_index=True)
+    x = [x.coords[0][0] for x in hot_spot.geometry]
+    y = [x.coords[0][1] for x in hot_spot.geometry]
+    hot_spot["x"] = x
+    hot_spot["y"] = y
+    hot_spot = hot_spot.drop_duplicates(subset=['x', 'y'])
 
+    return (hot_spot.drop(columns=["x", "y"]))
+
+# there is a problem with this function, it takes lot of time to run it...
 def replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, gdf_w_stride, gdf_last, output_filename, output_dir):
 
     """
@@ -361,6 +369,7 @@ def replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, 
     hot_spot = fix_double_edge_cases(gra_no_stride, gra_w_stride)
 
     # fixing errors
+    # I think that the lines below fail if there are no overlaps?
     boulders_at_double_edge_ns = gpd.overlay(gdf_no_stride, hot_spot, how='intersection', keep_geom_type=False)
     boulders_at_double_edge_ws = gpd.overlay(gdf_w_stride, hot_spot, how='intersection', keep_geom_type=False)
     boulders_at_double_edge_fp = gpd.overlay(gdf_last, hot_spot, how='intersection', keep_geom_type=False)
@@ -454,6 +463,7 @@ def merging_overlapping_boulders(gdf_final, output_filename, output_dir):
     gdf_overlap_but_not["boulder_id"] = 0
 
     gdf = gpd.GeoDataFrame(pd.concat([gdf_non_overlapping, overlapping_tbm, gdf_overlap_but_not], ignore_index=True))
+    gdf = gdf.set_crs(gdf_final.crs, allow_override=True)
     gdf.boulder_id = np.arange(gdf.shape[0])
     gdf.to_file(output_dir / output_filename)
     return (gdf)
