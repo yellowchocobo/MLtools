@@ -92,16 +92,16 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
         gdf_empty = gpd.GeoDataFrame(geometry=[])
         gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
 
-@click.command()
-@click.option('--in_raster', required=True, type=str, help='Path to satellite image.')
-@click.option('--config_file', required=True, type=str, help='Path to Detectron2 config file.')
-@click.option('--model_weights', required=True, type=str, help='Path to model weights.')
-@click.option('--device', required=True, type=str, help='choose device, gpu or cpu')
-@click.option('--scores', default=0.5, help='Prediction threshold.')
-@click.option('--search_tif_pattern', default="*.tif", help='Search tif pattern for image patches.')
-@click.option('--block_width', default=512, help='Block width of the image patches.')
-@click.option('--block_height', default=512, help='Block height of the image patches.')
-@click.option('--output_dir', required=True, type=str, help='Path to output directory.')
+#@click.command()
+#@click.option('--in_raster', required=True, type=str, help='Path to satellite image.')
+#@click.option('--config_file', required=True, type=str, help='Path to Detectron2 config file.')
+#@click.option('--model_weights', required=True, type=str, help='Path to model weights.')
+#@click.option('--device', required=True, type=str, help='choose device, gpu or cpu')
+##@click.option('--scores', default=0.5, help='Prediction threshold.')
+#@click.option('--search_tif_pattern', default="*.tif", help='Search tif pattern for image patches.')
+#@click.option('--block_width', default=512, help='Block width of the image patches.')
+#@click.option('--block_height', default=512, help='Block height of the image patches.')
+#@click.option('--output_dir', required=True, type=str, help='Path to output directory.')
 def default_predictions(in_raster, config_file, model_weights, device, scores, search_tif_pattern,
                         block_width, block_height, output_dir):
 
@@ -523,5 +523,5 @@ def quickfix_invalid_geometry(boulders_shp):
         None
     return (gdf_boulders)
 
-if __name__ == '__main__':
-    default_predictions()
+#if __name__ == '__main__':
+#    default_predictions()
