@@ -18,16 +18,26 @@ from pathlib import Path
 # TODO: save to shapefile (issues if working with different coordinates!) need to
 # TODO: save early in the process (before the concatenation)
 # should probably be moved to grid.py
+
+def rm_tree(pth):
+    pth = Path(pth)
+    for child in pth.glob('*'):
+        if child.is_file():
+            child.unlink()
+        else:
+            rm_tree(child)
+    pth.rmdir()
+
 def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name, stride=(0,0)):
 
     """
-
     :param in_raster:
     :param block_width:
     :param block_height:
     :param geopackage:
     :return:
     """
+
     in_raster = Path(in_raster)
     globa_graticule_name = Path(globa_graticule_name)
     globa_graticule_name = globa_graticule_name.absolute()
@@ -243,37 +253,58 @@ def tiling_raster_from_dataframe(df_selection_tiles, dataset_directory, block_wi
 
     dataset_directory = Path(dataset_directory)
     folder_structure(df_selection_tiles, dataset_directory) # ensure folders are created
+    datasets = df_selection_tiles.dataset.unique()
 
-    for index, row in tqdm(df_selection_tiles.iterrows(), total=df_selection_tiles.shape[0]):
+    nimages = 0
+    for d in datasets:
+        image_directory = (dataset_directory / d / "images")
+        n = len(list(image_directory.glob("*.tif")))
+        nimages = nimages + n
 
-        # this is only useful within the loop if generating tiling on multiple images
-        in_raster = row.raster_ap
-        src_profile = raster.get_raster_profile(in_raster)
-        win_profile = src_profile
-        win_profile["width"] = block_width
-        win_profile["height"] = block_height
+    ntiles = df_selection_tiles.shape[0]
 
-        arr = raster.read_raster(in_raster=in_raster, bbox=rio.windows.Window(*row.rwindows))
+    if nimages == ntiles:
+        print("Number of tiles == Number of tiles in specified folder(s). No tiling required.")
+    # if for some reasons they don't match, it just need to be re-tiled
+    # we delete the image directory(ies) just to start from a clean folder
+    else:
+        for d in datasets:
+            image_directory = (dataset_directory / d / "images")
+            rm_tree(image_directory)
 
-        # edge cases (in the East, and South, the extent can be beigger than the actual raster)
-        # read_raster will then return an array with not the dimension
-        h, w = arr.squeeze().shape
+        # re-creating folder structure
+        folder_structure(df_selection_tiles, dataset_directory)
 
-        if (h, w) != (block_height, block_width):
-            arr = np.pad(arr.squeeze(),
-                         [(0, block_height - h), (0, block_width - w)],
-                         mode='constant', constant_values=0)
-            arr = np.expand_dims(arr, axis=0)
+        for index, row in tqdm(df_selection_tiles.iterrows(), total=ntiles):
 
-        filename_tif = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", ".tif"))
-        filename_png1 = (dataset_directory / row.dataset / "images" / row.file_name)
-        filename_png3 = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", "-3band.png"))
-        win_profile["transform"] = Affine(*row["transform"])
+            # this is only useful within the loop if generating tiling on multiple images
+            in_raster = row.raster_ap
+            src_profile = raster.get_raster_profile(in_raster)
+            win_profile = src_profile
+            win_profile["width"] = block_width
+            win_profile["height"] = block_height
 
-        # generate tif and pngs (1- and 3-bands)
-        raster.save_raster(filename_tif, arr, win_profile,is_image=False)
-        raster.tiff_to_png(filename_tif, filename_png1)
-        raster.fake_RGB(filename_png1, filename_png3)
+            arr = raster.read_raster(in_raster=in_raster, bbox=rio.windows.Window(*row.rwindows))
+
+            # edge cases (in the East, and South, the extent can be beigger than the actual raster)
+            # read_raster will then return an array with not the dimension
+            h, w = arr.squeeze().shape
+
+            if (h, w) != (block_height, block_width):
+                arr = np.pad(arr.squeeze(),
+                             [(0, block_height - h), (0, block_width - w)],
+                             mode='constant', constant_values=0)
+                arr = np.expand_dims(arr, axis=0)
+
+            filename_tif = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", ".tif"))
+            filename_png1 = (dataset_directory / row.dataset / "images" / row.file_name)
+            filename_png3 = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", "-3band.png"))
+            win_profile["transform"] = Affine(*row["transform"])
+
+            # generate tif and pngs (1- and 3-bands)
+            raster.save_raster(filename_tif, arr, win_profile,is_image=False)
+            raster.tiff_to_png(filename_tif, filename_png1)
+            raster.fake_RGB(filename_png1, filename_png3)
 
 def selection_boulders(df_selection_boulders, df_selection_tiles):
     dfs = []

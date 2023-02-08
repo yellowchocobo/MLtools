@@ -1,7 +1,6 @@
 import geopandas as gpd
 import numpy as np
 import rasterio as rio
-import click
 import pandas as pd
 import torch
 import sys
@@ -92,23 +91,17 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
         gdf_empty = gpd.GeoDataFrame(geometry=[])
         gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
 
-#@click.command()
-#@click.option('--in_raster', required=True, type=str, help='Path to satellite image.')
-#@click.option('--config_file', required=True, type=str, help='Path to Detectron2 config file.')
-#@click.option('--model_weights', required=True, type=str, help='Path to model weights.')
-#@click.option('--device', required=True, type=str, help='choose device, gpu or cpu')
-##@click.option('--scores', default=0.5, help='Prediction threshold.')
-#@click.option('--search_tif_pattern', default="*.tif", help='Search tif pattern for image patches.')
-#@click.option('--block_width', default=512, help='Block width of the image patches.')
-#@click.option('--block_height', default=512, help='Block height of the image patches.')
-#@click.option('--output_dir', required=True, type=str, help='Path to output directory.')
 def default_predictions(in_raster, config_file, model_weights, device, scores, search_tif_pattern,
                         block_width, block_height, output_dir):
+
+    # maybe have to get rid of output_dir?
 
     output_dir = Path(output_dir)
     in_raster = Path(in_raster)
     model_weights = Path(model_weights)
     config_file = Path(config_file)
+    config_version = [i for i in config_file.stem.split("-") if i.startswith("v0")][0] # name dependent which is not good...
+    scores_str = "scores" + str(int(scores*100)).zfill(3)
 
     # create automatically paths
     (output_dir / "shp").mkdir(parents=True, exist_ok=True)
@@ -119,18 +112,18 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
 
     # no stride
     dataset_directory = output_dir / "inference-no-stride" / "images"
-    out_shapefile = output_dir / "shp" / "predictions-no-stride.shp"
+    out_shapefile = output_dir / "shp" / (in_raster.stem + "-predictions-no-stride-" + scores_str + "-" + config_version + ".shp")
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
         (df_no_stride, gdf_no_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_no_stride_p, stride=(0, 0))
         df_no_stride["dataset"] = "inference-no-stride"
-        create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height)
+        create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height) # only run it if ROM is different other
         predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # with stride
     dataset_directory = output_dir / "inference-w-stride" / "images"
-    out_shapefile = output_dir / "shp" / "predictions-w-stride.shp"
+    out_shapefile = output_dir / "shp" / (in_raster.stem + "-predictions-w-stride-"  + scores_str + "-" + config_version + ".shp")
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -141,7 +134,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
 
     # top bottom
     dataset_directory = output_dir / "inference-top-bottom" / "images"
-    out_shapefile = output_dir / "shp" / "predictions-top-bottom.shp"
+    out_shapefile = output_dir / "shp" / (in_raster.stem + "-predictions-top-bottom-"  + scores_str + "-" + config_version + ".shp")
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -159,7 +152,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
 
     # left right
     dataset_directory = output_dir / "inference-left-right" / "images"
-    out_shapefile = output_dir / "shp" / "predictions-left-right.shp"
+    out_shapefile = output_dir / "shp" / (in_raster.stem + "-predictions-left-right-" + scores_str + "-" + config_version + ".shp")
     if out_shapefile.is_file():
         print(out_shapefile.as_posix() + " already exists. Delete file if it needs to be recomputed... ")
     else:
@@ -175,16 +168,18 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
 
     # fixing edge issues
-    predictions_no_stride = output_dir / "shp" / "predictions-no-stride.shp"
-    predictions_with_stride = output_dir / "shp" / "predictions-w-stride.shp"
-    predictions_left_right = output_dir / "shp" / "predictions-left-right.shp"
-    predictions_top_bottom = output_dir / "shp" / "predictions-top-bottom.shp"
+    predictions_no_stride = output_dir / "shp" / (in_raster.stem + "-predictions-no-stride-" + scores_str + "-" + config_version + ".shp")
+    predictions_with_stride = output_dir / "shp" / (in_raster.stem + "-predictions-w-stride-" + scores_str + "-" + config_version + ".shp")
+    predictions_left_right = output_dir / "shp" / (in_raster.stem + "-predictions-left-right-" + scores_str + "-" + config_version + ".shp")
+    predictions_top_bottom = output_dir / "shp" / (in_raster.stem + "-predictions-top-bottom-" + scores_str + "-" + config_version + ".shp")
 
     # fix invalid geometry (not sure if this work in all cases!)
     __ = quickfix_invalid_geometry(predictions_no_stride)
     __ = quickfix_invalid_geometry(predictions_with_stride)
     __ = quickfix_invalid_geometry(predictions_left_right)
     __ = quickfix_invalid_geometry(predictions_top_bottom)
+
+    stem = in_raster.stem + "-" + scores_str + "-" + config_version
 
     gdf = fix_edge_cases(predictions_no_stride, predictions_with_stride,
                          predictions_top_bottom, predictions_left_right,
@@ -319,13 +314,18 @@ def replace_boulder_intersecting(gdf_boulders_original, gdf_boulders_replace, gd
         gdf_boulders_original_at_edge = gdf_boulders_original[gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge)]
         gdf_boulders_original_not_at_edge = gdf_boulders_original[~(gdf_boulders_original.boulder_id.isin(idx_boulders_at_edge))]
 
-        # Finding intersecting boulders in other
+        # Finding intersecting boulders in the replacement GeoDataFrame
         gdf_boulders_replace_intersecting = gpd.overlay(gdf_boulders_replace, gdf_edge_intersections, how='intersection', keep_geom_type=False)
-        idx_boulders_at_edge = gdf_boulders_replace_intersecting.boulder_id_1.unique()
-        gdf_boulders_replace_at_edge = gdf_boulders_replace[gdf_boulders_replace.boulder_id.isin(idx_boulders_at_edge)]
 
-        gdf = gpd.GeoDataFrame(pd.concat([gdf_boulders_original_not_at_edge, gdf_boulders_replace_at_edge], ignore_index=True))
-        gdf.boulder_id = np.arange(gdf.shape[0])
+        # if no intersecting boulders found in the replacement GeoDataFrame
+        if gdf_boulders_replace_intersecting.shape[0] == 0:
+            gdf = gdf_boulders_original
+        else:
+            idx_boulders_at_edge = gdf_boulders_replace_intersecting.boulder_id_1.unique() # problem here sometimes... if no intersection send error message...
+            gdf_boulders_replace_at_edge = gdf_boulders_replace[gdf_boulders_replace.boulder_id.isin(idx_boulders_at_edge)]
+
+            gdf = gpd.GeoDataFrame(pd.concat([gdf_boulders_original_not_at_edge, gdf_boulders_replace_at_edge], ignore_index=True))
+            gdf.boulder_id = np.arange(gdf.shape[0])
     else:
         gdf = gdf_boulders_original
     gdf.to_file(output_dir / output_filename)
@@ -474,6 +474,12 @@ def fix_edge_cases(predictions_no_stride, predictions_with_stride,
 
     output_dir = Path(output_dir)
 
+    # retrieve name information
+    stem = predictions_no_stride.stem
+    scores_name = stem.split("-")[-2]
+    version_name = stem.split("-")[-1]
+    raster_name = stem.split("-")[0]
+
     gdf_no_stride = gpd.read_file(predictions_no_stride)
     gdf_w_stride = gpd.read_file(predictions_with_stride)
     gdf_left_right = gpd.read_file(predictions_left_right)
@@ -494,13 +500,14 @@ def fix_edge_cases(predictions_no_stride, predictions_with_stride,
     lines_topbottom = lines_where_boulders_intersect_edges(gdf_no_stride, gra_edge_top_bottom_final, 'lines-where-boulder-intersects-top-bottom.shp', output_dir)
     lines_leftright = lines_where_boulders_intersect_edges(gdf_no_stride, gra_edge_left_right_final, 'lines-where-boulder-intersects-left-right.shp', output_dir)
 
-    gdf1 = replace_boulder_intersecting(gdf_no_stride, gdf_w_stride, lines_center, "preliminary-predictions.shp", output_dir)
-    gdf2 = replace_boulder_intersecting(gdf1, gdf_top_bottom, lines_topbottom, "preliminary-predictions.shp", output_dir)
-    gdf3 = replace_boulder_intersecting(gdf2, gdf_left_right, lines_leftright, "preliminary-predictions.shp", output_dir)
-    gdf_degde = replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, gdf_w_stride, gdf3, "preliminary-predictions.shp", output_dir)
-    gdf_final = merging_overlapping_boulders(gdf_degde, "predictions-including-edge-fix.shp", output_dir)
+    preliminary_predictions_p = raster_name + "-preliminary-predictions-" + scores_name + "-" + version_name + ".shp"
+    final_predictions_p = raster_name + "-final-predictions-" + scores_name + "-" + version_name + ".shp"
+    gdf1 = replace_boulder_intersecting(gdf_no_stride, gdf_w_stride, lines_center, preliminary_predictions_p, output_dir)
+    gdf2 = replace_boulder_intersecting(gdf1, gdf_top_bottom, lines_topbottom, preliminary_predictions_p, output_dir)
+    gdf3 = replace_boulder_intersecting(gdf2, gdf_left_right, lines_leftright, preliminary_predictions_p, output_dir)
+    gdf_degde = replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, gdf_w_stride, gdf3, preliminary_predictions_p, output_dir)
+    gdf_final = merging_overlapping_boulders(gdf_degde, final_predictions_p, output_dir)
     return gdf_final
-
 
 def quickfix_invalid_geometry(boulders_shp):
     print ("...fixing invalid geometries...")
@@ -522,6 +529,3 @@ def quickfix_invalid_geometry(boulders_shp):
     else:
         None
     return (gdf_boulders)
-
-#if __name__ == '__main__':
-#    default_predictions()
