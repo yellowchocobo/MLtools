@@ -385,6 +385,7 @@ def replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, 
     gdf_double_edge = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gdf_tom.geometry.unary_union, crs=gdf_no_stride.crs)).explode()
     gdf_not_double_edge = gdf_last[~(gdf_last.boulder_id.isin(idx3))]
     gdf = gpd.GeoDataFrame(pd.concat([gdf_double_edge, gdf_not_double_edge], ignore_index=True))
+    gdf = gdf.set_crs(gdf_no_stride.crs, allow_override=True)
     gdf.boulder_id = np.arange(gdf.shape[0])
     gdf.to_file(output_dir / output_filename)
     return (gdf)
