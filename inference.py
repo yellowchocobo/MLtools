@@ -18,9 +18,24 @@ sys.path.append("/home/nilscp/GIT/")
 from MLtools import create_annotations
 
 def predict(config_file, model_weights, device, image_dir, out_shapefile,
-            search_pattern="*.tif", scores=0.5):
+            search_pattern="*.tif", scores_thresh_test=0.10, nms_thresh_test=0.30,
+            min_size_test=1024, max_size_test=1024,
+            pre_nms_topk_test=2000, post_nms_topk_test=1000,
+            detections_per_image=2000):
     """
-    This function crashes if not a single prediction is detected!
+    Description of params for scores, min_size_test, max_size_test,
+    pre_nms_topk_test, post_nms_topk_test and detections_per_image are copied
+    from the Detectron2 config file explanation (see
+    https://detectron2.readthedocs.io/en/latest/modules/config.html).
+
+    For the detection boulders, the parameters give pretty good results:
+    scores_thresh_test = 0.10 (before 0.50)
+    nms_thresh_test = 0.30 (0.50)
+    min_size_test = 1024 (800)
+    max_size_test = 1024 (800)
+    pre_nms_topk_test = 2000 (?)
+    post_nms_topk_test = 1000 (or 500)
+    detections_per_image = 2000 (in case you have lot of boulders in your image)
 
     :param config_file:
     :param model_weights:
@@ -28,7 +43,27 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
     :param image_dir:
     :param out_shapefile:
     :param search_pattern:
-    :param scores:
+    :param scores_thresh_test: Minimum score threshold (assuming scores in a
+    [0, 1] range); a value chosen to balance obtaining high recall with not
+    having too many low precision detections that will slow down inference
+    post processing steps (like NMS). A default threshold of 0.0 increases AP
+    by ~0.2-0.3 but significantly slows down inference.
+    :param nms_thresh_test: Overlap threshold used for non-maximum suppression
+    (suppress boxes with IoU >= this threshold).
+    :param min_size_test: Size of the smallest side of the image during testing.
+    Set to zero to disable resize in testing.
+    :param max_size_test: Maximum size of the side of the image during testing
+    :param pre_nms_topk_test: Number of top scoring RPN proposals to keep before
+    applying NMS When FPN is used, this is *per FPN level* (not total)
+    :param post_nms_topk_test: Number of top scoring RPN proposals to keep after
+    applying NMS When FPN is used, this limit is applied per level and then again
+    to the union of proposals from all levels. NOTE: When FPN is used, the
+    meaning of this config is different from Detectron1. It means per-batch topk
+    in Detectron1, but per-image topk here. See the "find_top_rpn_proposals"
+    function for details.
+    :param detections_per_image: Maximum number of detections to return per
+    image during inference
+
     :return:
     """
     # load model and weight of the models
@@ -36,7 +71,14 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
     cfg.merge_from_file(config_file)
     cfg.MODEL.WEIGHTS = model_weights.as_posix()
     cfg.MODEL.DEVICE = device
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = scores
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = scores_thresh_test
+    cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST = nms_thresh_test
+    cfg.INPUT.MIN_SIZE_TEST = min_size_test
+    cfg.INPUT.MAX_SIZE_TEST = max_size_test
+    cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = pre_nms_topk_test
+    cfg.MODEL.RPN.POST_NMS_TOPK_TEST = post_nms_topk_test
+    cfg.TEST.DETECTIONS_PER_IMAGE = detections_per_image
+
 
     # predictor for one image
     predictor = DefaultPredictor(cfg)
@@ -119,7 +161,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         (df_no_stride, gdf_no_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_no_stride_p, stride=(0, 0))
         df_no_stride["dataset"] = "inference-no-stride"
         create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height) # only run it if ROM is different other
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
 
     # with stride
     dataset_directory = output_dir / "inference-w-stride" / "images"
@@ -130,7 +172,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         (df_w_stride, gdf_w_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_with_stride_p, stride=(250, 250))
         df_w_stride["dataset"] = "inference-w-stride"
         create_annotations.tiling_raster_from_dataframe(df_w_stride, output_dir, block_width, block_height)
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
 
     # top bottom
     dataset_directory = output_dir / "inference-top-bottom" / "images"
@@ -148,7 +190,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         df3 = df3[df3.tile_id.isin(tile_id_edge)]
         df3["dataset"] = "inference-top-bottom"
         create_annotations.tiling_raster_from_dataframe(df3, output_dir, block_width, block_height)
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
 
     # left right
     dataset_directory = output_dir / "inference-left-right" / "images"
@@ -165,7 +207,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         df4 = df4[df4.tile_id.isin(tile_id_edge)]
         df4["dataset"] = "inference-left-right"
         create_annotations.tiling_raster_from_dataframe(df4, output_dir, block_width, block_height)
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
 
     # fixing edge issues
     predictions_no_stride = output_dir / "shp" / (in_raster.stem + "-predictions-no-stride-" + scores_str + "-" + config_version + ".shp")
