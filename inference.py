@@ -64,6 +64,8 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
     :param detections_per_image: Maximum number of detections to return per
     image during inference
 
+    is connectivity = 4 in features.shape?
+
     :return:
     """
     # load model and weight of the models
@@ -115,17 +117,25 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
                     features.shapes(pred_mask, mask=pred_mask,
                                     transform=src.transform)))
 
-                geoms.append(list(results)[0])
-                scores_list.append(float(torch.Tensor.numpy(
-                    outputs["instances"].scores.to("cpu")[i])))
-                boulder_id.append(bid)
-                bid = bid + 1
+                results_ = list(results)
+                # no predictions
+                if len(results_) == 0:
+                    None
+                else:
+                    # this is necessary as sometimes multipolygons are generated
+                    for res in results_:
+                        geoms.append(res)
+                        boulder_id.append(bid)
+                        bid = bid + 1
+                        scores_list.append(float(torch.Tensor.numpy(outputs["instances"].scores.to("cpu")[i])))
 
     if len(geoms) > 0:
         gpd_polygonized_raster = gpd.GeoDataFrame.from_features(geoms, crs=meta["crs"])
         gpd_polygonized_raster["scores"] = scores_list
         gpd_polygonized_raster["boulder_id"] = boulder_id
         gpd_polygonized_raster.to_file(out_shapefile)
+
+    # no predictions in the whole image!
     else:
         schema = {"geometry": "Polygon",
                   "properties": {"raster_val": "float", "scores": "float",

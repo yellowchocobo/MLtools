@@ -129,7 +129,7 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
         # for very specific cases, it can return a MultiPolygon
         # if the edge of boulders oscillate between two rectangle grids
         # I need to tackle this kind of problem.
-        gdf_clip = gpd.clip(gdf_boulders, mask=bbox, keep_geom_type=True)
+        gdf_clip = gpd.clip(gdf_boulders, mask=bbox, keep_geom_type=True) # this introduce errors if same boulders zig zag in and out of area
         gdf_clip["area"] = gdf_clip.geometry.area
 
         # 2. filtering
@@ -194,6 +194,42 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
 def merge_dataframes(frames):
     return(pd.concat(frames, ignore_index=True))
 
+def split_per_image(df_selection_tiles, gdf_selection_tiles, split):
+    np.random.seed(seed=27)
+    train_tiles = []
+    validation_tiles = []
+    test_tiles = []
+
+    unique_image_id = df_selection_tiles.image_id.unique()
+
+    numpy_split = [np.round(split[0], decimals=2), np.round(split[0] + split[1], decimals=2)]
+
+    for i in unique_image_id:
+        df_selection = df_selection_tiles[df_selection_tiles.image_id == i]
+        train_tiles_tmp, val_tiles_tmp , test_tiles_tmp = np.split(
+            df_selection.sample(frac=1, random_state=27),
+            [int(numpy_split[0]*len(df_selection)),
+             int(numpy_split[1]*len(df_selection))])
+
+        train_tiles.append(train_tiles_tmp)
+        validation_tiles.append(val_tiles_tmp)
+        test_tiles.append(test_tiles_tmp)
+
+    df_train_tiles = pd.concat(train_tiles)
+    df_train_tiles["dataset"] = "train"
+    df_val_tiles = pd.concat(validation_tiles)
+    df_val_tiles["dataset"] = "validation"
+    df_test_tiles = pd.concat(test_tiles)
+    df_test_tiles["dataset"] = "test"
+
+    df_selection_tiles_split = pd.concat([df_train_tiles, df_val_tiles, df_test_tiles])
+    df_selection_tiles_split = df_selection_tiles_split.sample(frac=1, random_state=27)
+
+    # re-index gdf
+    gdf_selection_tiles_split = gdf_selection_tiles.reindex(df_selection_tiles_split.index)
+
+    return (df_selection_tiles_split, gdf_selection_tiles_split)
+
 def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
     """
     Shuffle tiles and randomly distributes the selection rectangle grids /
@@ -229,12 +265,6 @@ def split_global(df_selection_tiles, gdf_selection_tiles_updated, split):
     gdf_selection_tiles_updated["dataset"] = "train"
     gdf_selection_tiles_updated["dataset"].iloc[val_idx] = "validation"
     gdf_selection_tiles_updated["dataset"].iloc[test_idx] = "test"
-
-    # delete! save to shapefile (issues if working with different coordinates!)
-    # which is the case!! loop through coordinates and save one file for each
-    # coordinates...?
-    #gdf_selection_tiles_updated.to_file(out_shapefile)
-    #print("shapefile " + out_shapefile.as_posix() + " has been generated")
 
     return (df_selection_tiles, gdf_selection_tiles_updated)
 
