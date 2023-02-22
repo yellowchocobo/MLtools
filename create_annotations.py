@@ -155,7 +155,7 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
     if gdf_boulders[gdf_boulders.geometry.geom_type == "MultiPolygon"].shape[0] > 0:
         gdf_multipolygon = gdf_boulders[gdf_boulders.geometry.geom_type == "MultiPolygon"]
         id_multipolygon = gdf_multipolygon.index.values
-        gdf_explode = gdf_multipolygon.explode(ignore_index=True)
+        gdf_explode = gdf_multipolygon.explode(index_parts=True, ignore_index=True)
         gdf_explode["area"] = gdf_explode.geometry.area
         gdf_explode_selection = gdf_explode[gdf_explode["area"] > min_area_threshold]
 

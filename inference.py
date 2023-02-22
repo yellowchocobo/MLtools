@@ -330,7 +330,7 @@ def lines_where_boulders_intersect_edges(gdf_boulders, gdf_lines, output_filenam
 
     # only keep the longest line when a multilinestring is generated
     gdf_MultiLineString = edge_issues[edge_issues.geometry.geom_type == 'MultiLineString']
-    gdf_MultiLineString = gdf_MultiLineString.explode()
+    gdf_MultiLineString = gdf_MultiLineString.explode(index_parts=True)
     gdf_MultiLineString["length"] = gdf_MultiLineString.geometry.length
     gdf_MultiLineString = gdf_MultiLineString.sort_values(by=["boulder_id", "length"])
     gdf_MultiLineString = gdf_MultiLineString.drop_duplicates(subset="boulder_id", keep='last')
@@ -390,7 +390,7 @@ def fix_double_edge_cases(gra_no_stride, gra_w_stride):
 
     # the drop duplicates is extremely slow, so it is better to create two
     # columns (x and y) and drop duplicated based on it.
-    hot_spot = hot_spot.explode(ignore_index=True)
+    hot_spot = hot_spot.explode(index_parts=True, ignore_index=True)
     x = [x.coords[0][0] for x in hot_spot.geometry]
     y = [x.coords[0][1] for x in hot_spot.geometry]
     hot_spot["x"] = x
@@ -434,7 +434,7 @@ def replace_boulders_at_double_edge(gra_no_stride, gra_w_stride, gdf_no_stride, 
                                           gdf_w_stride[gdf_w_stride.boulder_id.isin(idx2)],
                                           gdf_last[gdf_last.boulder_id.isin(idx3)]], ignore_index=True))
 
-    gdf_double_edge = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gdf_tom.geometry.unary_union, crs=gdf_no_stride.crs)).explode()
+    gdf_double_edge = gpd.GeoDataFrame(geometry=gpd.GeoSeries(gdf_tom.geometry.unary_union, crs=gdf_no_stride.crs)).explode(index_parts=True)
     gdf_not_double_edge = gdf_last[~(gdf_last.boulder_id.isin(idx3))]
     gdf = gpd.GeoDataFrame(pd.concat([gdf_double_edge, gdf_not_double_edge], ignore_index=True))
     gdf = gdf.set_crs(gdf_no_stride.crs, allow_override=True)
