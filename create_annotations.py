@@ -13,12 +13,6 @@ from tqdm import tqdm
 from rastertools import raster
 from pathlib import Path
 
-
-# TODO: if boulders located in tile but over NaN region!
-# TODO: save to shapefile (issues if working with different coordinates!) need to
-# TODO: save early in the process (before the concatenation)
-# should probably be moved to grid.py
-
 def rm_tree(pth):
     pth = Path(pth)
     for child in pth.glob('*'):
@@ -28,7 +22,7 @@ def rm_tree(pth):
             rm_tree(child)
     pth.rmdir()
 
-def generate_graticule_from_raster(in_raster, block_width, block_height, globa_graticule_name, stride=(0,0)):
+def generate_graticule_from_raster(in_raster, block_width, block_height, global_graticule_name, stride=(0,0)):
 
     """
     :param in_raster:
@@ -37,14 +31,17 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, globa_g
     :param geopackage:
     :return:
     """
-
     in_raster = Path(in_raster)
-    globa_graticule_name = Path(globa_graticule_name)
-    globa_graticule_name = globa_graticule_name.absolute()
-    pickle_name = globa_graticule_name.with_name(globa_graticule_name.stem + ".pkl")
+    print("...generate graticule for raster " + in_raster.name + " (" + str(block_width) + "x" + str(block_height) + " pixels)" + "...")
+
+    global_graticule_name = Path(global_graticule_name)
+    global_graticule_name = global_graticule_name.absolute()
+    pickle_name = global_graticule_name.with_name(global_graticule_name.stem + ".pkl")
     res = raster.get_raster_resolution(in_raster)[0]
 
     (windows, transforms, bounds) = raster.tile_windows(in_raster, block_width, block_height, stride)
+
+    assert len(bounds) < 10000, "Number of tiles larger than 10,000. Please modify function generate_graticule_from_raster()."
 
     polygons = [shapely.geometry.box(l, b, r, t) for l, b, r, t in bounds]
     tile_id = [i for i in range(len(bounds))]
@@ -65,16 +62,12 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, globa_g
                                'raster_ap', 'raster_rp', 'rwindows',
                                'transform', 'bbox_im', 'coord_sys', 'pix_res'])
     df.to_pickle(pickle_name)
-    print("pickle " + pickle_name.as_posix() + " has been generated")
-
     df_qgis = df[['image_id', 'tile_id', 'file_name']]
 
     gdf = gpd.GeoDataFrame(df_qgis, geometry=polygons)
     gdf = gdf.set_crs(crs)
 
-    gdf.to_file(globa_graticule_name)
-    print("shapefile " + globa_graticule_name.as_posix() + " has been generated")
-
+    gdf.to_file(global_graticule_name)
     return (df, gdf)
 
 
@@ -281,6 +274,8 @@ def folder_structure(df, dataset_directory):
 
 def tiling_raster_from_dataframe(df_selection_tiles, dataset_directory, block_width, block_height):
 
+    print("...tiling raster(s) from dataframe...")
+
     dataset_directory = Path(dataset_directory)
     folder_structure(df_selection_tiles, dataset_directory) # ensure folders are created
     datasets = df_selection_tiles.dataset.unique()
@@ -315,9 +310,6 @@ def tiling_raster_from_dataframe(df_selection_tiles, dataset_directory, block_wi
             win_profile["height"] = block_height
 
             arr = raster.read_raster(in_raster=in_raster, bbox=rio.windows.Window(*row.rwindows))
-
-            # edge cases (in the East, and South, the extent can be beigger than the actual raster)
-            # read_raster will then return an array with not the dimension
             h, w = arr.squeeze().shape
 
             if (h, w) != (block_height, block_width):
@@ -328,13 +320,11 @@ def tiling_raster_from_dataframe(df_selection_tiles, dataset_directory, block_wi
 
             filename_tif = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", ".tif"))
             filename_png1 = (dataset_directory / row.dataset / "images" / row.file_name)
-            filename_png3 = (dataset_directory / row.dataset / "images" / row.file_name.replace(".png", "-3band.png"))
             win_profile["transform"] = Affine(*row["transform"])
 
             # generate tif and pngs (1- and 3-bands)
-            raster.save_raster(filename_tif, arr, win_profile,is_image=False)
+            raster.save_raster(filename_tif, arr, win_profile, is_image=False)
             raster.tiff_to_png(filename_tif, filename_png1)
-            raster.fake_RGB(filename_png1, filename_png3)
 
 def selection_boulders(df_selection_boulders, df_selection_tiles):
     dfs = []

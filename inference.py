@@ -18,10 +18,10 @@ sys.path.append("/home/nilscp/GIT/")
 from MLtools import create_annotations
 
 def predict(config_file, model_weights, device, image_dir, out_shapefile,
-            search_pattern="*.tif", scores_thresh_test=0.10, nms_thresh_test=0.30,
-            min_size_test=1024, max_size_test=1024,
-            pre_nms_topk_test=2000, post_nms_topk_test=1000,
-            detections_per_image=2000):
+            search_pattern, scores_thresh_test, nms_thresh_test,
+            min_size_test, max_size_test,
+            pre_nms_topk_test, post_nms_topk_test,
+            detections_per_image):
     """
     Description of params for scores, min_size_test, max_size_test,
     pre_nms_topk_test, post_nms_topk_test and detections_per_image are copied
@@ -143,8 +143,10 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
         gdf_empty = gpd.GeoDataFrame(geometry=[])
         gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
 
-def default_predictions(in_raster, config_file, model_weights, device, scores, search_tif_pattern,
-                        block_width, block_height, output_dir):
+def default_predictions(in_raster, config_file, model_weights, device, search_tif_pattern,
+                        block_width, block_height, output_dir, scores_thresh_test=0.10, nms_thresh_test=0.30,
+                        min_size_test=512, max_size_test=512, pre_nms_topk_test=2000, post_nms_topk_test=1000,
+                        detections_per_image=2000):
 
     # maybe have to get rid of output_dir?
 
@@ -153,7 +155,7 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
     model_weights = Path(model_weights)
     config_file = Path(config_file)
     config_version = [i for i in config_file.stem.split("-") if i.startswith("v0")][0] # name dependent which is not good...
-    scores_str = "scores" + str(int(scores*100)).zfill(3)
+    scores_str = "scores" + str(int(scores_thresh_test*100)).zfill(3)
 
     # create automatically paths
     (output_dir / "shp").mkdir(parents=True, exist_ok=True)
@@ -171,7 +173,9 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         (df_no_stride, gdf_no_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_no_stride_p, stride=(0, 0))
         df_no_stride["dataset"] = "inference-no-stride"
         create_annotations.tiling_raster_from_dataframe(df_no_stride, output_dir, block_width, block_height) # only run it if ROM is different other
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_tif_pattern, scores_thresh_test, nms_thresh_test,
+                        min_size_test, max_size_test, pre_nms_topk_test, post_nms_topk_test,
+                        detections_per_image)
 
     # with stride
     dataset_directory = output_dir / "inference-w-stride" / "images"
@@ -182,7 +186,9 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         (df_w_stride, gdf_w_stride) = create_annotations.generate_graticule_from_raster(in_raster, block_width, block_height, graticule_with_stride_p, stride=(250, 250))
         df_w_stride["dataset"] = "inference-w-stride"
         create_annotations.tiling_raster_from_dataframe(df_w_stride, output_dir, block_width, block_height)
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_tif_pattern, scores_thresh_test, nms_thresh_test,
+                        min_size_test, max_size_test, pre_nms_topk_test, post_nms_topk_test,
+                        detections_per_image)
 
     # top bottom
     dataset_directory = output_dir / "inference-top-bottom" / "images"
@@ -200,7 +206,9 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         df3 = df3[df3.tile_id.isin(tile_id_edge)]
         df3["dataset"] = "inference-top-bottom"
         create_annotations.tiling_raster_from_dataframe(df3, output_dir, block_width, block_height)
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_tif_pattern, scores_thresh_test, nms_thresh_test,
+                        min_size_test, max_size_test, pre_nms_topk_test, post_nms_topk_test,
+                        detections_per_image)
 
     # left right
     dataset_directory = output_dir / "inference-left-right" / "images"
@@ -217,7 +225,9 @@ def default_predictions(in_raster, config_file, model_weights, device, scores, s
         df4 = df4[df4.tile_id.isin(tile_id_edge)]
         df4["dataset"] = "inference-left-right"
         create_annotations.tiling_raster_from_dataframe(df4, output_dir, block_width, block_height)
-        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_pattern=search_tif_pattern, scores_thresh_test=scores)
+        predict(config_file, model_weights, device, dataset_directory, out_shapefile, search_tif_pattern, scores_thresh_test, nms_thresh_test,
+                        min_size_test, max_size_test, pre_nms_topk_test, post_nms_topk_test,
+                        detections_per_image)
 
     # fixing edge issues
     predictions_no_stride = output_dir / "shp" / (in_raster.stem + "-predictions-no-stride-" + scores_str + "-" + config_version + ".shp")
