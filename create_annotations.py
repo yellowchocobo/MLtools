@@ -32,7 +32,9 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, global_
     :return:
     """
     in_raster = Path(in_raster)
-    print("...generate graticule for raster " + in_raster.name + " (" + str(block_width) + "x" + str(block_height) + " pixels)" + "...")
+    print("...Generate graticule for raster " + in_raster.name +
+          " (" + str(block_width) + "x" + str(block_height) + " pixels, stride " + 
+          str(stride[0]) + "/" + str(stride[1]) + ")" + "...")
 
     global_graticule_name = Path(global_graticule_name)
     global_graticule_name = global_graticule_name.absolute()
@@ -274,7 +276,7 @@ def folder_structure(df, dataset_directory):
 
 def tiling_raster_from_dataframe(df_selection_tiles, dataset_directory, block_width, block_height):
 
-    print("...tiling raster(s) from dataframe...")
+    print("...Tiling raster(s) from dataframe...")
 
     dataset_directory = Path(dataset_directory)
     folder_structure(df_selection_tiles, dataset_directory) # ensure folders are created
