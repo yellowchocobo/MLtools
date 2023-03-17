@@ -17,6 +17,7 @@ from detectron2.engine import DefaultPredictor
 
 sys.path.append("/home/nilscp/GIT/")
 from MLtools import create_annotations
+from rastertools import raster
 
 def predict(config_file, model_weights, device, image_dir, out_shapefile,
             search_pattern, scores_thresh_test, nms_thresh_test,
@@ -828,7 +829,7 @@ def predictions(in_raster, config_file, model_weights, device,
         else:
             # make predictions
             print("...Making predictions for " + out_shapefile.stem + "...")
-            inference.predict(config_file, model_weights, device, dataset_directory,
+            predict(config_file, model_weights, device, dataset_directory,
                               out_shapefile, search_tif_pattern,
                               scores_thresh_test, nms_thresh_test, min_size_test,
                               max_size_test, pre_nms_topk_test,
@@ -836,13 +837,14 @@ def predictions(in_raster, config_file, model_weights, device,
 
     return (graticule_names_p)
 
-def picking_predictions_at_centres(in_raster, distance_p, graticule_names_p, scores_str, config_version, output_dir):
+def picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, config_version, output_dir):
     '''
     This is the second approach.
     '''
     # This covers the first fours
     clipped_boulders = []
     ROI_restricted = []
+    res = raster.get_raster_resolution(in_raster)[0]
 
     print("...Stichting multiple predictions together...")
 
@@ -862,8 +864,8 @@ def picking_predictions_at_centres(in_raster, distance_p, graticule_names_p, sco
     # difference
     gdf_left_right = gpd.read_file(graticule_names_p[4])
     gdf_top_bottom = gpd.read_file(graticule_names_p[5])
-    ROI_restricted_left_right = gpd.GeoSeries(gdf_left_right.unary_union, crs=gdf_left_right.crs).difference(gdf_union).explode()
-    ROI_restricted_top_bottom = gpd.GeoSeries(gdf_top_bottom.unary_union, crs=gdf_top_bottom.crs).difference(gdf_union).explode()
+    ROI_restricted_left_right = gpd.GeoSeries(gdf_left_right.unary_union, crs=gdf_left_right.crs).difference(gdf_union).explode(index_parts=True)
+    ROI_restricted_top_bottom = gpd.GeoSeries(gdf_top_bottom.unary_union, crs=gdf_top_bottom.crs).difference(gdf_union).explode(index_parts=True)
 
     # Stride (0, block_height/2) - Index 4
     stride_name = graticule_names_p[4].stem.split(in_raster.stem + "-")[-1]
@@ -920,7 +922,7 @@ def predictions_stitching_filtering(in_raster, config_file, model_weights,
     config_version = [i for i in config_file.stem.split("-") if i.startswith("v0")][0]  # name dependent which is not good...
 
     # Only selecting predictions at the centre (include overlapping values)
-    gdf_conc = picking_predictions_at_centres(in_raster, distance_p, graticule_names_p, scores_str, config_version, output_dir)
+    gdf_conc = picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, config_version, output_dir)
 
     # Removal of duplicates with Non Maximum Suppression
     gdf_final = nms(gdf_conc, nms_thresh_test)
