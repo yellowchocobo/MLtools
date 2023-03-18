@@ -865,7 +865,9 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
     gdf_left_right = gpd.read_file(graticule_names_p[4])
     gdf_top_bottom = gpd.read_file(graticule_names_p[5])
     ROI_restricted_left_right = gpd.GeoSeries(gdf_left_right.unary_union, crs=gdf_left_right.crs).difference(gdf_union).explode(index_parts=True)
+    ROI_restricted_left_right.index = np.arange(ROI_restricted_left_right.shape[0]).astype('int')
     ROI_restricted_top_bottom = gpd.GeoSeries(gdf_top_bottom.unary_union, crs=gdf_top_bottom.crs).difference(gdf_union).explode(index_parts=True)
+    ROI_restricted_top_bottom.index = np.arange(ROI_restricted_top_bottom.shape[0]).astype('int')
 
     # Stride (0, block_height/2) - Index 4
     stride_name = graticule_names_p[4].stem.split(in_raster.stem + "-")[-1]
