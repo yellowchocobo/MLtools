@@ -923,10 +923,10 @@ def predictions_stitching_filtering(in_raster, config_file, model_weights,
     scores_str = "scores" + str(int(scores_thresh_test * 100)).zfill(3)
     config_version = [i for i in config_file.stem.split("-") if i.startswith("v0")][0]  # name dependent which is not good...
 
-    # Only selecting predictions at the centre (include overlapping values)
+    # Only selecting predictions at the centre (include overlapping values) - Slow for large number of boulders
     gdf_conc = picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, config_version, output_dir)
 
-    # Removal of duplicates with Non Maximum Suppression
+    # Removal of duplicates with Non Maximum Suppression - Slow for large number of boulders (use torchvision.ops.batched_nms?)
     gdf_final = nms(gdf_conc, nms_thresh_test)
     boulder_predictions_final = output_dir / "shp" / (in_raster.stem + "-" + "boulder-predictions" + "-" + scores_str + "-" + config_version + ".shp")
     gdf_final.to_file(boulder_predictions_final)

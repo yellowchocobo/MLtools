@@ -43,11 +43,11 @@ def generate_graticule_from_raster(in_raster, block_width, block_height, global_
 
     (windows, transforms, bounds) = raster.tile_windows(in_raster, block_width, block_height, stride)
 
-    assert len(bounds) < 10000, "Number of tiles larger than 10,000. Please modify function generate_graticule_from_raster()."
+    assert len(bounds) < 100000, "Number of tiles larger than 100,000. Please modify function generate_graticule_from_raster()."
 
     polygons = [shapely.geometry.box(l, b, r, t) for l, b, r, t in bounds]
     tile_id = [i for i in range(len(bounds))]
-    image_id_png = [in_raster.stem + "_" + str(i).zfill(4) + "_image.png" for i in range(len(bounds))] # can it get over 9999 tiles?
+    image_id_png = [in_raster.stem + "_" + str(i).zfill(5) + "_image.png" for i in range(len(bounds))]
     raster_name_abs = [in_raster.as_posix() for i in range(len(bounds))]
     raster_name_rel = [in_raster.name for i in range(len(bounds))]
     windows_px = [list(i.flatten()) for i in windows]
