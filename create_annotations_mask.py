@@ -287,7 +287,7 @@ def gen_semantic_segm_mask(df_selection_tiles, dataset_directory):
         semantic_segm_mask(image, labels)
 
 
-def annotations_to_df(df_selection_tiles, dataset_directory, block_width, block_height, json_out):
+def annotations_to_df(df_selection_tiles, dataset_directory, block_width, block_height, add_one, json_out):
     print("...Generating Detectron2 custom dataset from dataframe...")
 
     ntiles = df_selection_tiles.shape[0]
@@ -323,7 +323,7 @@ def annotations_to_df(df_selection_tiles, dataset_directory, block_width, block_
                 out, tt = rio.mask.mask(src, [row_gdf.geometry],
                                         all_touched=False, invert=False)
                 masks[i, :, :] = (out[0] > 0).astype('uint8')
-                bbox_xyxy.append(bbox_numpy(out[0] > 0))
+                bbox_xyxy.append(bbox_numpy(out[0] > 0, add_one))
 
             # Then I have to convert the masks (as rle...) bit mask...
             for m in masks:
@@ -342,13 +342,16 @@ def annotations_to_df(df_selection_tiles, dataset_directory, block_width, block_
     return (df_json)
 
 
-def bbox_numpy(img):
+def bbox_numpy(img, add_one=True):
+    # similar behavior as Detectron2 (with +1, make sense in QGIS)
     rows = np.any(img, axis=1)
     cols = np.any(img, axis=0)
     ymin, ymax = np.where(rows)[0][[0, -1]]
     xmin, xmax = np.where(cols)[0][[0, -1]]
-    return [float(xmin), float(ymin), float(xmax + 1), float(
-        ymax + 1)]  # similar behavior as Detectron2 (with +1, make sense in QGIS)
+    if add_one:
+        return [float(xmin), float(ymin), float(xmax + 1), float(ymax + 1)]
+    else:
+        return [float(xmin), float(ymin), float(xmax), float(ymax)]
 
 def wrapper(mapping_dir, saving_dir, split, block_width, block_height, out_json):
 
