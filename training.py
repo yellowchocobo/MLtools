@@ -2034,7 +2034,7 @@ def training_AlbumentMapper(config_file, config_file_complete, augmentation_file
     trainer.resume_or_load(resume=False)
     trainer.train()
 
-def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation_file):
+def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation_file, min_area):
 
     use_cuda = torch.cuda.is_available()
     if use_cuda:
@@ -2050,7 +2050,7 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
     class AlbumentationsMapper:
         """Mapper which uses `albumentations` augmentations"""
 
-        def __init__(self, cfg, is_train: bool = True):
+        def __init__(self, cfg, min_area, is_train: bool = True):
             aug_kwargs = cfg.aug_kwargs
             if is_train:
                 aug_dict = aug_kwargs
@@ -2060,14 +2060,14 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
 
             self.transform = A.from_dict(aug_dict)
             self.is_train = is_train
+            self.min_area = min_area
 
             mode = "training" if is_train else "inference"
             print(
                 f"[AlbumentationsMapper] Augmentations used in {mode}: {self.transform}")
 
         def __call__(self, dataset_dict):
-            dataset_dict = copy.deepcopy(
-                dataset_dict)  # it will be modified by code below
+            dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
             image = utils.read_image(dataset_dict["file_name"], format="BGR")
             masks = [mask_util.decode(i["segmentation"]) for i in
                      dataset_dict["annotations"]]
@@ -2085,7 +2085,7 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
             for i in transformed_masks_filtered:
                 n_px_per_mask.append(len(np.nonzero(i)[0]))
 
-            idx = np.where(np.array(n_px_per_mask) >= 9)[0].tolist()
+            idx = np.where(np.array(n_px_per_mask) >= self.min_area)[0].tolist()
             transformed_masks_final = [transformed_masks_filtered[i] for i in
                                        range(len(transformed_masks_filtered)) if
                                        i in idx]
@@ -2841,15 +2841,15 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
 
     class MyTrainer(DefaultTrainer):
         @classmethod
-        def build_train_loader(cls, cfg, is_train=True, sampler=None):
+        def build_train_loader(cls, cfg, min_area, is_train=True, sampler=None):
             return build_detection_train_loader(
-                cfg, mapper=AlbumentationsMapper(cfg, is_train), sampler=sampler
+                cfg, mapper=AlbumentationsMapper(cfg, min_area, is_train), sampler=sampler
             )
 
         @classmethod
-        def build_test_loader(cls, cfg, dataset_name):
+        def build_test_loader(cls, cfg, min_area, dataset_name):
             return build_detection_test_loader(
-                cfg, dataset_name, mapper=AlbumentationsMapper(cfg, False)
+                cfg, dataset_name, mapper=AlbumentationsMapper(cfg, min_area, False)
             )
 
         @classmethod

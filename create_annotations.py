@@ -179,10 +179,11 @@ def clip_boulders(boulders_shapefile, selection_tiles_shapefile, min_area_thresh
 
     # is it necessary to save? interesting for debugging and visual inspection
     gdf_boulders.to_file(out_selection_boulders_shapefile)
-    gdf_selection_tiles_updated.to_file(selection_tiles_shapefile)  # overwrite
+    # I don't want region of mapping to be overwritten anymore
+    #gdf_selection_tiles_updated.to_file(selection_tiles_shapefile)  # overwrite
 
     print("shapefile " + out_selection_boulders_shapefile.as_posix() + " has been generated")
-    print("shapefile " + selection_tiles_shapefile.as_posix() + " has been overwritten (graticules/rectangle grids with no boulder occurences are deleted)")
+    #print("shapefile " + selection_tiles_shapefile.as_posix() + " has been overwritten (graticules/rectangle grids with no boulder occurences are deleted)")
 
     return gdf_boulders, gdf_selection_tiles_updated, df_selection_tiles
 

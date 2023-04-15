@@ -269,9 +269,13 @@ def semantic_segm_mask(image, labels):
 
     with rio.open(image) as src:
         arr = src.read()  # always read as channel, height, width
-        seg_mask, __ = rio.mask.mask(src, gdf.geometry, all_touched=False,
-                                     invert=False)
-        seg_mask_byte = (seg_mask > 0).astype('uint8')
+
+        try:
+            seg_mask, __ = rio.mask.mask(src, gdf.geometry, all_touched=False, invert=False)
+            seg_mask_byte = (seg_mask > 0).astype('uint8')
+        # if no values are in there...
+        except:
+            seg_mask_byte = np.zeros_like(arr).astype('uint8')
 
     raster.save_raster(seg_mask_filename, seg_mask_byte, out_meta, False)
 
@@ -353,7 +357,7 @@ def bbox_numpy(img, add_one=True):
     else:
         return [float(xmin), float(ymin), float(xmax), float(ymax)]
 
-def wrapper(mapping_dir, saving_dir, split, block_width, block_height, out_json):
+def wrapper(mapping_dir, saving_dir, split, block_width, block_height, resolution_limit, out_json):
 
     """
 
@@ -414,7 +418,7 @@ def wrapper(mapping_dir, saving_dir, split, block_width, block_height, out_json)
     # tiling boudler mapping (create pairs of image and shapefile),
     # it would be nice to modify generate_graticule_from_raster to include an absolute path to the boulder_mapping (would make life much
     # easier!)
-    tiling_boulders_as_shp_from_df(df_split, saving_dir, resolution_limit=2)
+    tiling_boulders_as_shp_from_df(df_split, saving_dir, resolution_limit)
     # 2 is needed because clip can create polygons less than a pixel, which will result in an empty mask
 
     # generate semantic segmentation mask
