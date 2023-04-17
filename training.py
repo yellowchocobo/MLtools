@@ -1866,9 +1866,6 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
     class BOULDERconfig:
         # augmentations
         aug_kwargs: Dict = field(default_factory=lambda: {})
-        # minimum number of pixels of mask to retain after augmentations
-        min_area_npixels: Dict = field(default_factory=lambda: {})
-
 
         def update(self, param_dict: Dict) -> "BOULDERconfig":
             # Overwrite by `param_dict`
@@ -1880,8 +1877,7 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
 
     # read augmentations
     augmentations_dict = load_aug_dict(augmentation_file)
-    flags = BOULDERconfig().update({"aug_kwargs": augmentations_dict,
-                                    "min_area_npixels": min_area_npixels})
+    flags = BOULDERconfig().update({"aug_kwargs": augmentations_dict})
     cfg = get_cfg()
     cfg.merge_from_file(config_file)
 
@@ -1890,7 +1886,7 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
         f.write(cfg.dump())
 
     cfg.aug_kwargs = CN(flags.aug_kwargs)
-    cfg.aug_kwargs = CN(flags.min_area_npixels)
+    cfg.min_area_npixels = min_area_npixels
     cfg.MODEL.DEVICE = device
 
     # training

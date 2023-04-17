@@ -774,6 +774,8 @@ def predictions(in_raster, config_file, model_weights, device,
     scores_str = "scores" + str(int(scores_thresh_test * 100)).zfill(3)
     config_version = \
     [i for i in config_file.stem.split("-") if i.startswith("v0")][0]  # name dependent which is not good...
+    min_size_test_str = "minsize" + str(int(min_size_test)).zfill(4)
+    max_size_test_str = "maxsize" + str(int(max_size_test)).zfill(4)
 
     assert block_width % 2 == 0, "Please chose a block_width that can be divived by two."
     assert block_height % 2 == 0, "Please chose a block_height that can be divived by two."
@@ -822,7 +824,8 @@ def predictions(in_raster, config_file, model_weights, device,
                                                         block_height)
         stride_name = graticule_names_p[i].stem.split(in_raster.stem + "-")[-1]
         dataset_directory = output_dir / stride_name / "images"
-        out_shapefile = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" + scores_str + "-" + config_version + ".shp")
+        out_shapefile = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                              scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
 
         if out_shapefile.is_file():
             print("...Predictions for " + out_shapefile.stem + " already exists...")
@@ -837,7 +840,7 @@ def predictions(in_raster, config_file, model_weights, device,
 
     return (graticule_names_p)
 
-def picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, config_version, output_dir):
+def picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, min_size_test_str,  max_size_test_str, config_version, output_dir):
     '''
     This is the second approach.
     '''
@@ -853,7 +856,8 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
         gdf_graticule = gpd.read_file(graticule_name_p)
         gdf_graticule_restricted = searching_area(gdf_graticule, block_width, block_height, distance_p, res)
         ROI_restricted.append(gdf_graticule_restricted)
-        boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" + scores_str + "-" + config_version + ".shp")
+        boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                              scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
         gdf_boulders = gpd.read_file(boulder_predictions_p) 
         clipped_boulders.append(spatial_selection(gdf_boulders, gdf_graticule_restricted))
 
@@ -871,13 +875,15 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
 
     # Stride (0, block_height/2) - Index 4
     stride_name = graticule_names_p[4].stem.split(in_raster.stem + "-")[-1]
-    boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" + scores_str + "-" + config_version + ".shp")
+    boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
     gdf_boulders = gpd.read_file(boulder_predictions_p)
     clipped_boulders.append(spatial_selection(gdf_boulders, gpd.GeoDataFrame(geometry=ROI_restricted_left_right, crs=ROI_restricted_left_right.crs)))
 
     # Stride (block_width/2, 0) - Index 5
     stride_name = graticule_names_p[5].stem.split(in_raster.stem + "-")[-1]
-    boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" + scores_str + "-" + config_version + ".shp")
+    boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
     gdf_boulders = gpd.read_file(boulder_predictions_p)
     clipped_boulders.append(spatial_selection(gdf_boulders, gpd.GeoDataFrame(geometry=ROI_restricted_top_bottom, crs=ROI_restricted_top_bottom.crs)))
 
@@ -891,7 +897,8 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
 
     # get predictions from no-stride
     stride_name = graticule_names_p[0].stem.split(in_raster.stem + "-")[-1]
-    boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" + scores_str + "-" + config_version + ".shp")
+    boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
     gdf_boulders = gpd.read_file(boulder_predictions_p)
     clipped_boulders.append(spatial_selection(gdf_boulders, gpd.GeoDataFrame(geometry=gdf_diff, crs=ROI_restricted[0].crs)))
 
@@ -899,7 +906,8 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
     gdf_conc = gpd.GeoDataFrame(pd.concat(clipped_boulders), crs=ROI_restricted[0].crs)
     gdf_conc.boulder_id = np.arange(gdf_conc.shape[0]).astype('int')
     gdf_conc.index = gdf_conc.boulder_id.values
-    boulder_predictions_conc = output_dir / "shp" / (in_raster.stem + "-boulder-predictions-w-duplicates" + "-" + scores_str + "-" + config_version + ".shp")
+    boulder_predictions_conc = output_dir / "shp" / (in_raster.stem + "-boulder-predictions-w-duplicates" + "-" +
+                                                     scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
     gdf_conc.to_file(boulder_predictions_conc)
 
     return gdf_conc
@@ -922,13 +930,18 @@ def predictions_stitching_filtering(in_raster, config_file, model_weights,
 
     scores_str = "scores" + str(int(scores_thresh_test * 100)).zfill(3)
     config_version = [i for i in config_file.stem.split("-") if i.startswith("v0")][0]  # name dependent which is not good...
+    min_size_test_str = "minsize" + str(int(min_size_test)).zfill(4)
+    max_size_test_str = "maxsize" + str(int(max_size_test)).zfill(4)
 
     # Only selecting predictions at the centre (include overlapping values) - Slow for large number of boulders
-    gdf_conc = picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, config_version, output_dir)
+    gdf_conc = picking_predictions_at_centres(in_raster, distance_p, block_width,
+                                              block_height, graticule_names_p, scores_str,
+                                              min_size_test_str,  max_size_test_str, config_version, output_dir)
 
     # Removal of duplicates with Non Maximum Suppression - Slow for large number of boulders (use torchvision.ops.batched_nms?)
     gdf_final = nms(gdf_conc, nms_thresh_test)
-    boulder_predictions_final = output_dir / "shp" / (in_raster.stem + "-" + "boulder-predictions" + "-" + scores_str + "-" + config_version + ".shp")
+    boulder_predictions_final = output_dir / "shp" / (in_raster.stem + "-" + "boulder-predictions" + "-" +
+                                                      scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
     gdf_final.to_file(boulder_predictions_final)
 
     return gdf_final
