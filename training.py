@@ -26,10 +26,7 @@ from detectron2.evaluation import DatasetEvaluator
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
 from detectron2.engine import DefaultPredictor, DefaultTrainer, launch
 from detectron2.engine.hooks import HookBase
-from detectron2.config import configurable
-from typing import List, Optional
 from skimage.draw import polygon2mask
-from detectron2.data import transforms as T
 from pathlib import Path
 from detectron2.config.config import CfgNode as CN
 from dataclasses import dataclass, field
@@ -41,6 +38,7 @@ from detectron2.data.datasets.coco import convert_to_coco_json
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import create_small_table
+from detectron2.solver import build
 
 try:
     from detectron2.evaluation.fast_eval_api import COCOeval_opt
@@ -189,8 +187,7 @@ def training_AlbumentMapper_polygon(config_file, config_file_complete, augmentat
 
             # equivalent to utils.filter_empty_instances
             transformed_masks = [transformed_masks[i] for i in idx]
-            idx, polygons = masks2polygons(
-                transformed_masks)  # some masks do not have enough coordinates to create a polygon
+            idx, polygons = masks2polygons(transformed_masks)  # some masks do not have enough coordinates to create a polygon
             transformed_bbox = [transformed_bbox[i] for i in idx]
 
             # Updating annotation
@@ -202,12 +199,9 @@ def training_AlbumentMapper_polygon(config_file, config_file_complete, augmentat
             annos = df.to_dict(orient='records')
 
             image_shape = transformed_image.shape[:2]  # h, w
-            dataset_dict["image"] = torch.as_tensor(
-                transformed_image.transpose(2, 0, 1).astype("float32"))
-            instances = utils.annotations_to_instances(annos, image_shape,
-                                                       mask_format="polygon")  # needs to be there
-            dataset_dict[
-                "instances"] = instances  # utils.filter_empty_instances(instances) #  --> this is done already above
+            dataset_dict["image"] = torch.as_tensor(transformed_image.transpose(2, 0, 1).astype("float32"))
+            instances = utils.annotations_to_instances(annos, image_shape, mask_format="polygon")  # needs to be there
+            dataset_dict["instances"] = instances  # utils.filter_empty_instances(instances) #  --> this is done already above
             return dataset_dict
 
 
@@ -1010,7 +1004,7 @@ def training_AlbumentMapper_polygon(config_file, config_file_complete, augmentat
     trainer.resume_or_load(resume=False)
     trainer.train()
 
-def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation_file, min_area_npixels):
+def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_name):
 
     use_cuda = torch.cuda.is_available()
     if use_cuda:
@@ -1033,11 +1027,10 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
             aug_kwargs = cfg.aug_kwargs
             if is_train:
                 aug_dict = aug_kwargs
+                self.transform = A.from_dict(aug_dict)
             else:
-                # we still want to upscale it to 512 even for testing
-                aug_dict = A.LongestMaxSize(max_size=512, interpolation=2, p=1.0).to_dict()
+                self.transform = A.Compose([])
 
-            self.transform = A.from_dict(aug_dict)
             self.is_train = is_train
 
             mode = "training" if is_train else "inference"
@@ -1047,15 +1040,12 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
         def __call__(self, dataset_dict):
             dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
             image = utils.read_image(dataset_dict["file_name"], format="BGR")
-            masks = [mask_util.decode(i["segmentation"]) for i in
-                     dataset_dict["annotations"]]
+            masks = [mask_util.decode(i["segmentation"]) for i in dataset_dict["annotations"]]
 
             transformed = self.transform(image=image, masks=masks)
             transformed_image = transformed['image']
-            transformed_masks = transformed[
-                'masks']  # need to remove empty mask
-            transformed_masks_filtered = [i for i in transformed_masks if
-                                          np.any(i)]  # removing if empty
+            transformed_masks = transformed['masks']  # need to remove empty mask
+            transformed_masks_filtered = [i for i in transformed_masks if np.any(i)]  # removing if empty
 
             # Counting the number of pixels in a mask
             # and removing if smaller than min_area_npixels (number of pixels)
@@ -1086,14 +1076,10 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
             annos = df.to_dict(orient='records')
 
             image_shape = transformed_image.shape[:2]  # h, w
-            dataset_dict["image"] = torch.as_tensor(
-                transformed_image.transpose(2, 0, 1).astype("float32"))
-            dataset_dict["height"] = image_shape[0]
-            dataset_dict["width"] = image_shape[1]
-            instances = utils.annotations_to_instances(annos, image_shape,
-                                                       mask_format="bitmask")  # needs to be there
-            dataset_dict[
-                "instances"] = instances  # utils.filter_empty_instances(instances) #  --> this is done already above
+            dataset_dict["image"] = torch.as_tensor(transformed_image.transpose(2, 0, 1).astype("float32"))
+
+            instances = utils.annotations_to_instances(annos, image_shape, mask_format="bitmask")  # needs to be there
+            dataset_dict["instances"] = instances  # utils.filter_empty_instances(instances) #  --> this is done already above
             return dataset_dict
 
 
@@ -1838,6 +1824,39 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
             return BoulderEvaluator(dataset_name, ("segm",), False, output_folder,
                                  max_dets_per_image=1000)
 
+        @classmethod
+        def build_lr_scheduler(cls, cfg, optimizer):
+            """
+            It now calls :func:`detectron2.solver.build_lr_scheduler`.
+            Overwrite it if you'd like a different scheduler.
+            """
+            return build.build_lr_scheduler(cfg, optimizer)
+
+        @classmethod
+        def build_optimizer(cls, cfg, model):
+            """
+            Build an optimizer from config.
+            """
+            params = build.get_default_optimizer_params(
+                model,
+                weight_decay=cfg.SOLVER.WEIGHT_DECAY,
+                weight_decay_norm=cfg.SOLVER.WEIGHT_DECAY_NORM,
+            )
+
+            optimizer_type = cfg.OPTIMIZER
+            if optimizer_type == "SGD":
+                return build.maybe_add_gradient_clipping(cfg, torch.optim.SGD)(
+                    params,
+                    cfg.SOLVER.BASE_LR,
+                    momentum=cfg.SOLVER.MOMENTUM,
+                    nesterov=cfg.SOLVER.NESTEROV,
+                )
+            elif optimizer_type == "ADAM":
+                return build.maybe_add_gradient_clipping(cfg, torch.optim.Adam)(
+                    params, cfg.SOLVER.BASE_LR)
+            else:
+                raise NotImplementedError(f"no optimizer type {optimizer_type}")
+
     class ValidationLoss(HookBase):
         def __init__(self, cfg):
             super().__init__()
@@ -1887,6 +1906,7 @@ def training_AlbumentMapper_mask(config_file, config_file_complete, augmentation
 
     cfg.aug_kwargs = CN(flags.aug_kwargs)
     cfg.min_area_npixels = min_area_npixels
+    cfg.OPTIMIZER = optimizer_name
     cfg.MODEL.DEVICE = device
 
     # training
