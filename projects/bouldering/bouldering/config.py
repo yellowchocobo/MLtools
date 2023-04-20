@@ -2,7 +2,7 @@ from detectron2.config import CfgNode as CN
 
 __all__ = ["add_config"]
 
-def add_config(cfg, aug_path, min_area_npixels, optimizer_n, scheduler_mode="triangular"):
+def add_config(cfg, aug_path, min_area_npixels, optimizer_n, scheduler_mode):
     """
     Add config for Bouldering project.
     """

@@ -1,18 +1,25 @@
 import os
 import sys
+import torch
+import detectron2.utils.comm as comm
 sys.path.append("/home/nilscp/GIT/")
-sys.path.append("/home/nilscp/GIT/MLtools/projects")
+sys.path.append("/home/nilscp/GIT/MLtools/projects/bouldering/bouldering")
 
 
-from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import build_detection_train_loader, build_detection_test_loader
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
-from bouldering import (add_config, AlbumentMapper_polygon, AlbumentMapper_bitmask,
-                        BoulderEvaluator, build_optimizer_sgd, build_optimizer_adam,
-                        build_lr_scheduler)
+from detectron2.engine.hooks import HookBase
+from detectron2.checkpoint import DetectionCheckpointer
 
-class Trainer(DefaultTrainer):
+# Bouldering project
+from config import add_config
+from dataset_mapper import (AlbumentMapper_polygon, AlbumentMapper_bitmask)
+from evaluator import BoulderEvaluator
+from solver import (build_optimizer_sgd, build_optimizer_adam, build_optimizer_adamw, build_lr_scheduler)
+from arg_parser import default_argument_parser
+
+class MyTrainer(DefaultTrainer):
     """
     We use the "DefaultTrainer" which contains a number pre-defined logic for
     standard training workflow. They may not work for you, especially if you
@@ -55,6 +62,8 @@ class Trainer(DefaultTrainer):
             opt = build_optimizer_sgd(cfg, model)
         elif cfg.SOLVER.OPTIMIZER == "ADAM":
             opt = build_optimizer_adam(cfg, model)
+        elif cfg.SOLVER.OPTIMIZER == "ADAMW":
+            opt = build_optimizer_adamw(cfg, model)
         return opt
 
     @classmethod
@@ -65,15 +74,86 @@ class Trainer(DefaultTrainer):
         """
         return build_lr_scheduler(cfg, optimizer)
 
+class ValidationLoss(HookBase):
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg.clone()
+        self.cfg.DATASETS.TRAIN = cfg.DATASETS.TEST[0]
+        self._loader = iter(MyTrainer.build_train_loader(self.cfg, is_train=False))
+
+    def after_step(self):
+        data = next(self._loader)
+        with torch.no_grad():
+            loss_dict = self.trainer.model(data)
+
+            losses = sum(loss_dict.values())
+            assert torch.isfinite(losses).all(), loss_dict
+
+            loss_dict_reduced = {"val_" + k: v.item() for k, v in
+                                 comm.reduce_dict(loss_dict).items()}
+            losses_reduced = sum(
+                loss for loss in loss_dict_reduced.values())
+            if comm.is_main_process():
+                self.trainer.storage.put_scalars(
+                    total_val_loss=losses_reduced,
+                    **loss_dict_reduced)
+
+def train(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode="triangular"):
+
+    use_cuda = torch.cuda.is_available()
+    if use_cuda:
+        print('__CUDNN VERSION:', torch.backends.cudnn.version())
+        print('__Number CUDA Devices:', torch.cuda.device_count())
+        print('__CUDA Device Name:', torch.cuda.get_device_name(0))
+        print('__CUDA Device Total Memory [GB]:',
+              torch.cuda.get_device_properties(0).total_memory / 1e9)
+
+    device = "cuda" if use_cuda else "cpu"
+    print("Device: ", device)
+
+    # read augmentations
+    cfg = get_cfg()
+    add_config(cfg, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode)
+    cfg.merge_from_file(config_file)
+
+    # Save complete config file
+    with open(config_file_complete, "w") as f:
+        f.write(cfg.dump())
+
+    cfg.MODEL.DEVICE = device
+
+    # training
+    trainer = MyTrainer(cfg)
+    val_loss = ValidationLoss(cfg)
+    trainer.register_hooks([val_loss])
+    # swap the order of PeriodicWriter and ValidationLoss
+    trainer._hooks = trainer._hooks[:-2] + trainer._hooks[-2:][::-1]
+    trainer.resume_or_load(resume=False)
+    trainer.train()
+
 
 def setup(args):
     """
     Create configs and perform basic setups.
     """
+
+    use_cuda = torch.cuda.is_available()
+    if use_cuda:
+        print('__CUDNN VERSION:', torch.backends.cudnn.version())
+        print('__Number CUDA Devices:', torch.cuda.device_count())
+        print('__CUDA Device Name:', torch.cuda.get_device_name(0))
+        print('__CUDA Device Total Memory [GB]:',
+              torch.cuda.get_device_properties(0).total_memory / 1e9)
+
+    device = "cuda" if use_cuda else "cpu"
+    print("Device: ", device)
+
+
     cfg = get_cfg()
-    add_config(cfg, args.aug_path, args.min_area_npixels, args.optimizer_n)
+    add_config(cfg, args.aug_path, args.min_area_npixels, args.optimizer_name, args.scheduler_mode)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    cfg.MODEL.DEVICE = device
     cfg.freeze()
     default_setup(cfg, args)
     return cfg
@@ -83,14 +163,18 @@ def main(args):
     cfg = setup(args)
 
     if args.eval_only:
-        model = Trainer.build_model(cfg)
+        model = MyTrainer.build_model(cfg)
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
-        res = Trainer.test(cfg, model)
+        res = MyTrainer.test(cfg, model)
         return res
 
-    trainer = Trainer(cfg)
+    trainer = MyTrainer(cfg)
+    val_loss = ValidationLoss(cfg)
+    trainer.register_hooks([val_loss])
+    # swap the order of PeriodicWriter and ValidationLoss
+    trainer._hooks = trainer._hooks[:-2] + trainer._hooks[-2:][::-1]
     trainer.resume_or_load(resume=args.resume)
     return trainer.train()
 

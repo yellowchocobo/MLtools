@@ -96,7 +96,7 @@ class ValidationLoss(HookBase):
                     total_val_loss=losses_reduced,
                     **loss_dict_reduced)
 
-def train(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode):
+def train(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode="triangular"):
 
     use_cuda = torch.cuda.is_available()
     if use_cuda:
