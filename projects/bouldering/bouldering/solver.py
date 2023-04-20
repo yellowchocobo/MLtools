@@ -157,7 +157,24 @@ def build_optimizer_adam(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.Op
     }
     if TORCH_VERSION >= (1, 12):
         adam_args["foreach"] = True
-    return maybe_add_gradient_clipping(cfg, torch.optim.SGD(**adam_args))
+    return maybe_add_gradient_clipping(cfg, torch.optim.Adam(**adam_args))
+
+def build_optimizer_adamw(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.Optimizer:
+    """
+    Build an optimizer from config.
+    """
+    params = get_default_optimizer_params(
+        model,
+        weight_decay=cfg.SOLVER.WEIGHT_DECAY,
+        weight_decay_norm=cfg.SOLVER.WEIGHT_DECAY_NORM,
+    )
+    adam_args = {
+        "params": params,
+        "lr": cfg.SOLVER.BASE_LR,
+    }
+    if TORCH_VERSION >= (1, 12):
+        adam_args["foreach"] = True
+    return maybe_add_gradient_clipping(cfg, torch.optim.AdamW(**adam_args))
 
 def get_default_optimizer_params(
     model: torch.nn.Module,
@@ -318,25 +335,25 @@ def build_lr_scheduler(cfg: CfgNode, optimizer: torch.optim.Optimizer) -> LRSche
             num_decays=cfg.SOLVER.NUM_DECAYS,
             num_updates=cfg.SOLVER.MAX_ITER,
         )
-    elif name == "oneCyclicLR":
+    elif name == "CyclicLR":
         # see https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.CyclicLR.html for default values
         # modified
         sched = torch.optim.lr_scheduler.CyclicLR(optimizer,
                                                   base_lr=cfg.SOLVER.BASE_LR,
                                                   max_lr=cfg.SOLVER.MAX_LR,
-                                                  step_size_up=cfg.SOLVER.STEP_SIZE_UP)  # max_lr and STEP_SIZE_UP need to be added
-
+                                                  step_size_up=cfg.SOLVER.STEP_SIZE_UP,
+                                                  mode=cfg.SOLVER.MODE)
     else:
         raise ValueError("Unknown LR scheduler: {}".format(name))
 
-    sched = lr_scheduler.WarmupParamScheduler(
-        sched,
-        cfg.SOLVER.WARMUP_FACTOR,
-        min(cfg.SOLVER.WARMUP_ITERS / cfg.SOLVER.MAX_ITER, 1.0),
-        cfg.SOLVER.WARMUP_METHOD,
-        cfg.SOLVER.RESCALE_INTERVAL,
-    )
-    if name == "oneCyclicLR":
+    if name == "CyclicLR":
         return sched
     else:
+        sched = lr_scheduler.WarmupParamScheduler(
+            sched,
+            cfg.SOLVER.WARMUP_FACTOR,
+            min(cfg.SOLVER.WARMUP_ITERS / cfg.SOLVER.MAX_ITER, 1.0),
+            cfg.SOLVER.WARMUP_METHOD,
+            cfg.SOLVER.RESCALE_INTERVAL,
+        )
         return lr_scheduler.LRMultiplier(optimizer, multiplier=sched, max_iter=cfg.SOLVER.MAX_ITER)

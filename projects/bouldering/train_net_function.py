@@ -15,7 +15,7 @@ from detectron2.engine.hooks import HookBase
 from config import add_config
 from dataset_mapper import (AlbumentMapper_polygon, AlbumentMapper_bitmask)
 from evaluator import BoulderEvaluator
-from solver import (build_optimizer_sgd, build_optimizer_adam, build_lr_scheduler)
+from solver import (build_optimizer_sgd, build_optimizer_adam, build_optimizer_adamw, build_lr_scheduler)
 
 class MyTrainer(DefaultTrainer):
     """
@@ -60,6 +60,8 @@ class MyTrainer(DefaultTrainer):
             opt = build_optimizer_sgd(cfg, model)
         elif cfg.SOLVER.OPTIMIZER == "ADAM":
             opt = build_optimizer_adam(cfg, model)
+        elif cfg.SOLVER.OPTIMIZER == "ADAMW":
+            opt = build_optimizer_adamw(cfg, model)
         return opt
 
     @classmethod
@@ -94,7 +96,7 @@ class ValidationLoss(HookBase):
                     total_val_loss=losses_reduced,
                     **loss_dict_reduced)
 
-def train(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_n):
+def train(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode):
 
     use_cuda = torch.cuda.is_available()
     if use_cuda:
@@ -109,7 +111,7 @@ def train(config_file, config_file_complete, augmentation_file, min_area_npixels
 
     # read augmentations
     cfg = get_cfg()
-    add_config(cfg, augmentation_file, min_area_npixels, optimizer_n)
+    add_config(cfg, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode)
     cfg.merge_from_file(config_file)
 
     # Save complete config file
