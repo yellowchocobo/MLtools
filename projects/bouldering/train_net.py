@@ -18,6 +18,7 @@ from dataset_mapper import (AlbumentMapper_polygon, AlbumentMapper_bitmask)
 from evaluator import BoulderEvaluator
 from solver import (build_optimizer_sgd, build_optimizer_adam, build_optimizer_adamw, build_lr_scheduler)
 from arg_parser import default_argument_parser
+from custom_datasets import test_dataset
 
 class MyTrainer(DefaultTrainer):
     """
@@ -98,40 +99,6 @@ class ValidationLoss(HookBase):
                     total_val_loss=losses_reduced,
                     **loss_dict_reduced)
 
-def train(config_file, config_file_complete, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode="triangular"):
-
-    use_cuda = torch.cuda.is_available()
-    if use_cuda:
-        print('__CUDNN VERSION:', torch.backends.cudnn.version())
-        print('__Number CUDA Devices:', torch.cuda.device_count())
-        print('__CUDA Device Name:', torch.cuda.get_device_name(0))
-        print('__CUDA Device Total Memory [GB]:',
-              torch.cuda.get_device_properties(0).total_memory / 1e9)
-
-    device = "cuda" if use_cuda else "cpu"
-    print("Device: ", device)
-
-    # read augmentations
-    cfg = get_cfg()
-    add_config(cfg, augmentation_file, min_area_npixels, optimizer_n, scheduler_mode)
-    cfg.merge_from_file(config_file)
-
-    # Save complete config file
-    with open(config_file_complete, "w") as f:
-        f.write(cfg.dump())
-
-    cfg.MODEL.DEVICE = device
-
-    # training
-    trainer = MyTrainer(cfg)
-    val_loss = ValidationLoss(cfg)
-    trainer.register_hooks([val_loss])
-    # swap the order of PeriodicWriter and ValidationLoss
-    trainer._hooks = trainer._hooks[:-2] + trainer._hooks[-2:][::-1]
-    trainer.resume_or_load(resume=False)
-    trainer.train()
-
-
 def setup(args):
     """
     Create configs and perform basic setups.
@@ -148,7 +115,6 @@ def setup(args):
     device = "cuda" if use_cuda else "cpu"
     print("Device: ", device)
 
-
     cfg = get_cfg()
     add_config(cfg, args.aug_path, args.min_area_npixels, args.optimizer_name, args.scheduler_mode)
     cfg.merge_from_file(args.config_file)
@@ -156,11 +122,17 @@ def setup(args):
     cfg.MODEL.DEVICE = device
     cfg.freeze()
     default_setup(cfg, args)
+    #config_file_complete = Path(args.config_file).with_name(Path(args.config_file).stem + "-complete.yaml")
+    #with open(config_file_complete, "w") as f:
+    #    f.write(cfg.dump())
     return cfg
 
 
 def main(args):
     cfg = setup(args)
+
+    # register custom dataset
+    test_dataset()
 
     if args.eval_only:
         model = MyTrainer.build_model(cfg)
