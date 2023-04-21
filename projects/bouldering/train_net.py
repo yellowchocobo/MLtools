@@ -18,7 +18,7 @@ from dataset_mapper import (AlbumentMapper_polygon, AlbumentMapper_bitmask)
 from evaluator import BoulderEvaluator
 from solver import (build_optimizer_sgd, build_optimizer_adam, build_optimizer_adamw, build_lr_scheduler)
 from arg_parser import default_argument_parser
-from custom_datasets import test_dataset
+from custom_datasets import bitmask_dataset
 
 class MyTrainer(DefaultTrainer):
     """
@@ -132,7 +132,7 @@ def main(args):
     cfg = setup(args)
 
     # register custom dataset
-    test_dataset()
+    bitmask_dataset()
 
     if args.eval_only:
         model = MyTrainer.build_model(cfg)

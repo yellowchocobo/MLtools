@@ -20,7 +20,7 @@ def generate_custom_dataset(json_file, img_dir, dataset_name):
 
     return boulder_metadata
 
-def test_dataset():
+def bitmask_dataset():
     json_file = Path("/home/nilscp/tmp/mask-test/test.json")
     img_dir = Path("/home/nilscp/tmp/mask-test/")
     dataset_name = "boulder_bitmask_5px"
