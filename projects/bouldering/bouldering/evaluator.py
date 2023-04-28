@@ -72,8 +72,7 @@ def boulder_summarize(self):
             mean_s = -1
         else:
             mean_s = np.mean(s[s > -1])
-        print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets,
-                          mean_s))
+        print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
         return mean_s
 
     def _summarizeDets():
@@ -81,33 +80,21 @@ def boulder_summarize(self):
         stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
         stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
         stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
-        stats[3] = _summarize(1, areaRng='small',
-                              maxDets=self.params.maxDets[2])
-        stats[4] = _summarize(1, areaRng='medium',
-                              maxDets=self.params.maxDets[2])
-        stats[5] = _summarize(1, areaRng='large',
-                              maxDets=self.params.maxDets[2])
-        stats[6] = _summarize(1, iouThr=.5, areaRng='small',
-                              maxDets=self.params.maxDets[2])
-        stats[7] = _summarize(1, iouThr=.5, areaRng='medium',
-                              maxDets=self.params.maxDets[2])
-        stats[8] = _summarize(1, iouThr=.5, areaRng='large',
-                              maxDets=self.params.maxDets[2])
+        stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[6] = _summarize(1, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[7] = _summarize(1, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[8] = _summarize(1, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
         stats[9] = _summarize(0, maxDets=self.params.maxDets[0])
         stats[10] = _summarize(0, maxDets=self.params.maxDets[1])
         stats[11] = _summarize(0, maxDets=self.params.maxDets[2])
-        stats[12] = _summarize(0, areaRng='small',
-                               maxDets=self.params.maxDets[2])
-        stats[13] = _summarize(0, areaRng='medium',
-                               maxDets=self.params.maxDets[2])
-        stats[14] = _summarize(0, areaRng='large',
-                               maxDets=self.params.maxDets[2])
-        stats[15] = _summarize(0, iouThr=.5, areaRng='small',
-                               maxDets=self.params.maxDets[2])
-        stats[16] = _summarize(0, iouThr=.5, areaRng='medium',
-                               maxDets=self.params.maxDets[2])
-        stats[17] = _summarize(0, iouThr=.5, areaRng='large',
-                               maxDets=self.params.maxDets[2])
+        stats[12] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[13] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[14] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[15] = _summarize(0, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[16] = _summarize(0, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[17] = _summarize(0, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
         return stats
 
     def _summarizeKps():
@@ -369,6 +356,11 @@ class BoulderEvaluator(DatasetEvaluator):
                 if len(coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
+
+            task_f = os.path.join(self._output_dir, task + ".txt")
+            with open(task_f, "a") as src:
+                src.write(coco_eval.stats)
+                src.write("\n")
 
             res = self._derive_coco_results(
                 coco_eval, task,
@@ -754,3 +746,14 @@ def _evaluate_predictions_on_coco(
     coco_eval.summarize()
 
     return coco_eval
+
+# would be interesting to see the number of inputs/ouputs
+class Counter(DatasetEvaluator):
+  def reset(self):
+    self.count = 0
+  def process(self, inputs, outputs):
+    for output in outputs:
+      self.count += len(output["instances"])
+  def evaluate(self):
+    # save self.count somewhere, or print it, or return it.
+    return {"count": self.count}

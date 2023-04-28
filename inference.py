@@ -1,3 +1,4 @@
+import albumentations as A
 import geopandas as gpd
 import numpy as np
 import rasterio as rio
@@ -14,6 +15,7 @@ from tqdm import tqdm
 
 from detectron2.config import get_cfg
 from detectron2.engine import DefaultPredictor
+from detectron2.data import detection_utils as utils
 
 sys.path.append("/home/nilscp/GIT/")
 from MLtools import create_annotations
@@ -102,9 +104,140 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
             meta = src.meta
 
             # loading image
-            array = Image.open(png)
-            array = np.array(array)
-            array = np.expand_dims(array, 2)
+            array = utils.read_image(png, format="BGR")
+
+            # inference
+            outputs = predictor(array)
+
+            for i, pred in enumerate(outputs["instances"].pred_masks.to("cpu")):
+                pred_mask = torch.Tensor.numpy(pred)
+                pred_mask = (pred_mask + 0.0).astype('uint8')
+                results = (
+                    {'properties': {'raster_val': v}, 'geometry': s}
+                    for j, (s, v)
+                    in enumerate(
+                    features.shapes(pred_mask, mask=pred_mask,
+                                    transform=src.transform)))
+
+                results_ = list(results)
+                # no predictions
+                if len(results_) == 0:
+                    None
+                else:
+                    # this is necessary as sometimes multipolygons are generated
+                    for res in results_:
+                        geoms.append(res)
+                        boulder_id.append(bid)
+                        bid = bid + 1
+                        scores_list.append(float(torch.Tensor.numpy(outputs["instances"].scores.to("cpu")[i])))
+
+    if len(geoms) > 0:
+        gpd_polygonized_raster = gpd.GeoDataFrame.from_features(geoms, crs=meta["crs"])
+        gpd_polygonized_raster["scores"] = scores_list
+        gpd_polygonized_raster["boulder_id"] = boulder_id
+        gpd_polygonized_raster.to_file(out_shapefile)
+
+    # no predictions in the whole image!
+    else:
+        schema = {"geometry": "Polygon",
+                  "properties": {"raster_val": "float", "scores": "float",
+                                 "boulder_id": "int"}}
+        gdf_empty = gpd.GeoDataFrame(geometry=[])
+        gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
+
+
+def predict_tta(config_file, model_weights, device, image_dir, out_shapefile,
+            search_pattern, scores_thresh_test, nms_thresh_test,
+            min_size_test, max_size_test,
+            pre_nms_topk_test, post_nms_topk_test,
+            detections_per_image):
+    """
+    Description of params for scores, min_size_test, max_size_test,
+    pre_nms_topk_test, post_nms_topk_test and detections_per_image are copied
+    from the Detectron2 config file explanation (see
+    https://detectron2.readthedocs.io/en/latest/modules/config.html).
+
+    For the detection boulders, the parameters give pretty good results:
+    scores_thresh_test = 0.10 (before 0.50)
+    nms_thresh_test = 0.30 (0.50)
+    min_size_test = 1024 (800)
+    max_size_test = 1024 (800)
+    pre_nms_topk_test = 2000 (?)
+    post_nms_topk_test = 1000 (or 500)
+    detections_per_image = 2000 (in case you have lot of boulders in your image)
+
+    :param config_file:
+    :param model_weights:
+    :param device:
+    :param image_dir:
+    :param out_shapefile:
+    :param search_pattern:
+    :param scores_thresh_test: Minimum score threshold (assuming scores in a
+    [0, 1] range); a value chosen to balance obtaining high recall with not
+    having too many low precision detections that will slow down inference
+    post processing steps (like NMS). A default threshold of 0.0 increases AP
+    by ~0.2-0.3 but significantly slows down inference.
+    :param nms_thresh_test: Overlap threshold used for non-maximum suppression
+    (suppress boxes with IoU >= this threshold).
+    :param min_size_test: Size of the smallest side of the image during testing.
+    Set to zero to disable resize in testing.
+    :param max_size_test: Maximum size of the side of the image during testing
+    :param pre_nms_topk_test: Number of top scoring RPN proposals to keep before
+    applying NMS When FPN is used, this is *per FPN level* (not total)
+    :param post_nms_topk_test: Number of top scoring RPN proposals to keep after
+    applying NMS When FPN is used, this limit is applied per level and then again
+    to the union of proposals from all levels. NOTE: When FPN is used, the
+    meaning of this config is different from Detectron1. It means per-batch topk
+    in Detectron1, but per-image topk here. See the "find_top_rpn_proposals"
+    function for details.
+    :param detections_per_image: Maximum number of detections to return per
+    image during inference
+
+    is connectivity = 4 in features.shape?
+
+    :return:
+    """
+    # load model and weight of the models
+    cfg = get_cfg()
+    cfg.merge_from_file(config_file)
+    cfg.MODEL.WEIGHTS = model_weights.as_posix()
+    cfg.MODEL.DEVICE = device
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = scores_thresh_test
+    cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST = nms_thresh_test
+    cfg.INPUT.MIN_SIZE_TEST = min_size_test
+    cfg.INPUT.MAX_SIZE_TEST = max_size_test
+    cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = pre_nms_topk_test
+    cfg.MODEL.RPN.POST_NMS_TOPK_TEST = post_nms_topk_test
+    cfg.TEST.DETECTIONS_PER_IMAGE = detections_per_image
+
+    # augmentations
+    transforms = [A.NoOp(p=1.0), A.Affine(p=1.0, rotate = 90.0), A.Affine(p=1.0, rotate = 180.0), A.Affine(p=1.0, rotate = 270.0),
+              A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0), A.Transpose(p=1.0), A.Compose([A.Affine(p=1.0, rotate = 180.0), A.Transpose(p=1.0)])]
+
+    inverse_transforms = [A.NoOp(p=1.0), A.Affine(p=1.0, rotate=-90.0),
+                          A.Affine(p=1.0, rotate=-180.0),
+                          A.Affine(p=1.0, rotate=-270.0),
+                          A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0),
+                          A.Transpose(p=1.0), A.Compose([A.Affine(p=1.0, rotate=180.0), A.Transpose(p=1.0)])]
+
+    # predictor for one image
+    predictor = DefaultPredictor(cfg)
+
+    image_dir = Path(image_dir)
+    geoms = []
+    scores_list = []
+    boulder_id = []
+
+    bid = 0
+
+    for tif in tqdm(sorted(image_dir.glob(search_pattern))):
+        png = tif.with_name(tif.name.replace('tif', 'png'))
+
+        with rio.open(tif) as src:
+            meta = src.meta
+
+            # loading image
+            array = utils.read_image(png, format="BGR")
 
             # inference
             outputs = predictor(array)
@@ -956,8 +1089,10 @@ def nms(gdf, nms_thresh_test):
 
     scores = gdf_copy.scores.to_numpy()
     scores_torch = torch.from_numpy(scores)
+    idxs_torch = torch.from_numpy(np.zeros(gdf_copy.shape[0]).astype("int"))
 
-    nms_filtered = torchvision.ops.nms(boxes=bboxes_torch, scores=scores_torch, iou_threshold=nms_thresh_test)
+    #nms_filtered = torchvision.ops.nms(boxes=bboxes_torch, scores=scores_torch, iou_threshold=nms_thresh_test)
+    nms_filtered = torchvision.ops.batched_nms(boxes=bboxes_torch, scores=scores_torch, idxs=idxs_torch, iou_threshold=nms_thresh_test)
     gdf_nms = gdf_copy[gdf_copy.index.isin(nms_filtered.numpy())]
     return gdf_nms
 

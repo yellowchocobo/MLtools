@@ -121,7 +121,7 @@ class AlbumentMapper_bitmask:
                                    range(len(transformed_masks_filtered)) if
                                    i in idx]
         transformed_bboxes = [bbox_numpy(i) for i in
-                              transformed_masks_final]
+                              transformed_masks_final] # +1 on the bbox
 
         transformed_rle_masks = []
 
