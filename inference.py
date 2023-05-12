@@ -147,10 +147,10 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
 
 
 def predict_tta(config_file, model_weights, device, image_dir, out_shapefile,
-            search_pattern, scores_thresh_test, nms_thresh_test,
-            min_size_test, max_size_test,
-            pre_nms_topk_test, post_nms_topk_test,
-            detections_per_image):
+                search_pattern, scores_thresh_test, nms_thresh_test,
+                min_size_test, max_size_test,
+                pre_nms_topk_test, post_nms_topk_test,
+                detections_per_image):
     """
     Description of params for scores, min_size_test, max_size_test,
     pre_nms_topk_test, post_nms_topk_test and detections_per_image are copied
@@ -197,6 +197,7 @@ def predict_tta(config_file, model_weights, device, image_dir, out_shapefile,
 
     :return:
     """
+
     # load model and weight of the models
     cfg = get_cfg()
     cfg.merge_from_file(config_file)
@@ -210,28 +211,29 @@ def predict_tta(config_file, model_weights, device, image_dir, out_shapefile,
     cfg.MODEL.RPN.POST_NMS_TOPK_TEST = post_nms_topk_test
     cfg.TEST.DETECTIONS_PER_IMAGE = detections_per_image
 
+    # predictor for one image
+    predictor = DefaultPredictor(cfg)
+    image_dir = Path(image_dir)
+    gdfs_list = []
+
     # augmentations
-    transforms = [A.NoOp(p=1.0), A.Affine(p=1.0, rotate = 90.0), A.Affine(p=1.0, rotate = 180.0), A.Affine(p=1.0, rotate = 270.0),
-              A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0), A.Transpose(p=1.0), A.Compose([A.Affine(p=1.0, rotate = 180.0), A.Transpose(p=1.0)])]
+    transforms = [A.NoOp(p=1.0), A.Affine(p=1.0, rotate=90.0),
+                  A.Affine(p=1.0, rotate=180.0), A.Affine(p=1.0, rotate=270.0),
+                  A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0),
+                  A.Transpose(p=1.0), A.Compose(
+            [A.Affine(p=1.0, rotate=180.0), A.Transpose(p=1.0)])]
 
     inverse_transforms = [A.NoOp(p=1.0), A.Affine(p=1.0, rotate=-90.0),
                           A.Affine(p=1.0, rotate=-180.0),
                           A.Affine(p=1.0, rotate=-270.0),
                           A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0),
-                          A.Transpose(p=1.0), A.Compose([A.Affine(p=1.0, rotate=180.0), A.Transpose(p=1.0)])]
-
-    # predictor for one image
-    predictor = DefaultPredictor(cfg)
-
-    image_dir = Path(image_dir)
-    geoms = []
-    scores_list = []
-    boulder_id = []
-
-    bid = 0
+                          A.Transpose(p=1.0), A.Compose(
+            [A.Affine(p=1.0, rotate=180.0), A.Transpose(p=1.0)])]
 
     for tif in tqdm(sorted(image_dir.glob(search_pattern))):
         png = tif.with_name(tif.name.replace('tif', 'png'))
+        geoms = []
+        scores_list = []
 
         with rio.open(tif) as src:
             meta = src.meta
@@ -239,44 +241,60 @@ def predict_tta(config_file, model_weights, device, image_dir, out_shapefile,
             # loading image
             array = utils.read_image(png, format="BGR")
 
-            # inference
-            outputs = predictor(array)
+            for k, t in enumerate(transforms):
 
-            for i, pred in enumerate(outputs["instances"].pred_masks.to("cpu")):
-                pred_mask = torch.Tensor.numpy(pred)
-                pred_mask = (pred_mask + 0.0).astype('uint8')
-                results = (
-                    {'properties': {'raster_val': v}, 'geometry': s}
-                    for j, (s, v)
-                    in enumerate(
-                    features.shapes(pred_mask, mask=pred_mask,
-                                    transform=src.transform)))
+                # inference
+                transformed = t(image=array)
+                image_tranformed = transformed["image"]
+                outputs = predictor(image_tranformed)
+                masks = torch.Tensor.numpy(
+                    outputs["instances"].pred_masks.to("cpu")).astype('uint8')
 
-                results_ = list(results)
-                # no predictions
-                if len(results_) == 0:
-                    None
-                else:
-                    # this is necessary as sometimes multipolygons are generated
-                    for res in results_:
-                        geoms.append(res)
-                        boulder_id.append(bid)
-                        bid = bid + 1
-                        scores_list.append(float(torch.Tensor.numpy(outputs["instances"].scores.to("cpu")[i])))
+                # inverse transforms
+                t_inv = inverse_transforms[k]
+                inv_transformed = t_inv(image=image_tranformed,
+                                        masks=list(masks))
+                mask_inverse_transformed = np.array(inv_transformed["masks"])
 
-    if len(geoms) > 0:
-        gpd_polygonized_raster = gpd.GeoDataFrame.from_features(geoms, crs=meta["crs"])
-        gpd_polygonized_raster["scores"] = scores_list
-        gpd_polygonized_raster["boulder_id"] = boulder_id
-        gpd_polygonized_raster.to_file(out_shapefile)
+                for i, pred_mask in enumerate(mask_inverse_transformed):
+                    results = (
+                        {'properties': {'raster_val': v}, 'geometry': s}
+                        for j, (s, v)
+                        in enumerate(
+                        features.shapes(pred_mask, mask=pred_mask,
+                                        transform=src.transform)))
 
-    # no predictions in the whole image!
+                    results_ = list(results)
+                    # no predictions
+                    if len(results_) == 0:
+                        None
+                    else:
+                        # this is necessary as sometimes multipolygons are generated (maybe I should get rid of those situations!)
+                        for res in results_:
+                            geoms.append(res)
+                            scores_list.append(float(torch.Tensor.numpy(
+                                outputs["instances"].scores.to("cpu")[i])))
+
+            if len(geoms) > 0:
+                gdf_polygonized_raster = gpd.GeoDataFrame.from_features(geoms, crs=meta["crs"])
+                gdf_polygonized_raster["scores"] = scores_list
+                gdf_nms = nms(gdf_polygonized_raster, nms_thresh_test)
+                gdfs_list.append(gdf_nms)
+            # no predictions in the whole image!
+            else:
+                None
+
+    if len(gdfs_list) > 0:
+        gdf_total = gpd.GeoDataFrame(pd.concat(gdfs_list, ignore_index=True))
+        gdf_total["boulder_id"] = np.arange(gdf_total.shape[0]).astype("int")
+        gdf_total.to_file(out_shapefile)
     else:
+
         schema = {"geometry": "Polygon",
                   "properties": {"raster_val": "float", "scores": "float",
                                  "boulder_id": "int"}}
-        gdf_empty = gpd.GeoDataFrame(geometry=[])
-        gdf_empty.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
+        gdf_total = gpd.GeoDataFrame(geometry=[])
+        gdf_total.to_file(out_shapefile, driver='ESRI Shapefile', schema=schema, crs=meta["crs"])
 
 def default_predictions(in_raster, config_file, model_weights, device, search_tif_pattern,
                         block_width, block_height, output_dir, scores_thresh_test=0.10, nms_thresh_test=0.30,
@@ -893,7 +911,7 @@ def quickfix_invalid_geometry(boulders_shp):
 
 def predictions(in_raster, config_file, model_weights, device,
                 search_tif_pattern,
-                block_width, block_height, output_dir, scores_thresh_test=0.10,
+                block_width, block_height, output_dir, is_tta=True, scores_thresh_test=0.10,
                 nms_thresh_test=0.30,
                 min_size_test=512, max_size_test=512, pre_nms_topk_test=2000,
                 post_nms_topk_test=1000,
@@ -957,23 +975,36 @@ def predictions(in_raster, config_file, model_weights, device,
                                                         block_height)
         stride_name = graticule_names_p[i].stem.split(in_raster.stem + "-")[-1]
         dataset_directory = output_dir / stride_name / "images"
-        out_shapefile = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
-                                              scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+        if is_tta:
+            out_shapefile = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + "-tta.shp")
+        else:
+            out_shapefile = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
 
         if out_shapefile.is_file():
             print("...Predictions for " + out_shapefile.stem + " already exists...")
         else:
             # make predictions
-            print("...Making predictions for " + out_shapefile.stem + "...")
-            predict(config_file, model_weights, device, dataset_directory,
-                              out_shapefile, search_tif_pattern,
-                              scores_thresh_test, nms_thresh_test, min_size_test,
-                              max_size_test, pre_nms_topk_test,
-                              post_nms_topk_test, detections_per_image)
+            if is_tta:
+                print("...Making tta predictions for " + out_shapefile.stem + "...")
+                predict_tta(config_file, model_weights, device, dataset_directory,
+                                  out_shapefile, search_tif_pattern,
+                                  scores_thresh_test, nms_thresh_test, min_size_test,
+                                  max_size_test, pre_nms_topk_test,
+                                  post_nms_topk_test, detections_per_image)
+            else:
+                print("...Making predictions for " + out_shapefile.stem + "...")
+                predict(config_file, model_weights, device, dataset_directory,
+                                  out_shapefile, search_tif_pattern,
+                                  scores_thresh_test, nms_thresh_test, min_size_test,
+                                  max_size_test, pre_nms_topk_test,
+                                  post_nms_topk_test, detections_per_image)
 
     return (graticule_names_p)
 
-def picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p, scores_str, min_size_test_str,  max_size_test_str, config_version, output_dir):
+def picking_predictions_at_centres(in_raster, distance_p, block_width, block_height, graticule_names_p,
+                                   scores_str, min_size_test_str,  max_size_test_str, config_version, output_dir, is_tta):
     '''
     This is the second approach.
     '''
@@ -981,6 +1012,12 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
     clipped_boulders = []
     ROI_restricted = []
     res = raster.get_raster_resolution(in_raster)[0]
+
+    # suffix
+    if is_tta:
+        suff = "-tta.shp"
+    else:
+        suff = ".shp"
 
     print("...Stichting multiple predictions together...")
 
@@ -990,7 +1027,7 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
         gdf_graticule_restricted = searching_area(gdf_graticule, block_width, block_height, distance_p, res)
         ROI_restricted.append(gdf_graticule_restricted)
         boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
-                                              scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+                                              scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + suff)
         gdf_boulders = gpd.read_file(boulder_predictions_p) 
         clipped_boulders.append(spatial_selection(gdf_boulders, gdf_graticule_restricted))
 
@@ -1009,14 +1046,14 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
     # Stride (0, block_height/2) - Index 4
     stride_name = graticule_names_p[4].stem.split(in_raster.stem + "-")[-1]
     boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
-                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + suff)
     gdf_boulders = gpd.read_file(boulder_predictions_p)
     clipped_boulders.append(spatial_selection(gdf_boulders, gpd.GeoDataFrame(geometry=ROI_restricted_left_right, crs=ROI_restricted_left_right.crs)))
 
     # Stride (block_width/2, 0) - Index 5
     stride_name = graticule_names_p[5].stem.split(in_raster.stem + "-")[-1]
     boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
-                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + suff)
     gdf_boulders = gpd.read_file(boulder_predictions_p)
     clipped_boulders.append(spatial_selection(gdf_boulders, gpd.GeoDataFrame(geometry=ROI_restricted_top_bottom, crs=ROI_restricted_top_bottom.crs)))
 
@@ -1031,7 +1068,7 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
     # get predictions from no-stride
     stride_name = graticule_names_p[0].stem.split(in_raster.stem + "-")[-1]
     boulder_predictions_p = output_dir / "shp" / (in_raster.stem + "-" + stride_name + "-boulder-predictions-" +
-                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+                                                  scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + suff)
     gdf_boulders = gpd.read_file(boulder_predictions_p)
     clipped_boulders.append(spatial_selection(gdf_boulders, gpd.GeoDataFrame(geometry=gdf_diff, crs=ROI_restricted[0].crs)))
 
@@ -1040,7 +1077,7 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
     gdf_conc.boulder_id = np.arange(gdf_conc.shape[0]).astype('int')
     gdf_conc.index = gdf_conc.boulder_id.values
     boulder_predictions_conc = output_dir / "shp" / (in_raster.stem + "-boulder-predictions-w-duplicates" + "-" +
-                                                     scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+                                                     scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + suff)
     gdf_conc.to_file(boulder_predictions_conc)
 
     return gdf_conc
@@ -1048,7 +1085,7 @@ def picking_predictions_at_centres(in_raster, distance_p, block_width, block_hei
 
 def predictions_stitching_filtering(in_raster, config_file, model_weights,
                                     device, search_tif_pattern, distance_p,
-                                    block_width, block_height, output_dir,
+                                    block_width, block_height, output_dir, is_tta=True,
                                     scores_thresh_test=0.10,
                                     nms_thresh_test=0.30,
                                     min_size_test=512, max_size_test=512,
@@ -1057,7 +1094,7 @@ def predictions_stitching_filtering(in_raster, config_file, model_weights,
                                     detections_per_image=2000):
     # predictions
     graticule_names_p = predictions(in_raster, config_file, model_weights, device,
-                search_tif_pattern, block_width, block_height, output_dir, scores_thresh_test,
+                search_tif_pattern, block_width, block_height, output_dir, is_tta, scores_thresh_test,
                 nms_thresh_test, min_size_test, max_size_test, pre_nms_topk_test,
                 post_nms_topk_test, detections_per_image)
 
@@ -1066,22 +1103,39 @@ def predictions_stitching_filtering(in_raster, config_file, model_weights,
     min_size_test_str = "minsize" + str(int(min_size_test)).zfill(4)
     max_size_test_str = "maxsize" + str(int(max_size_test)).zfill(4)
 
+    # suffix is_tta
+    if is_tta:
+        suff = "-tta.shp"
+    else:
+        suff = ".shp"
+
     # Only selecting predictions at the centre (include overlapping values) - Slow for large number of boulders
     gdf_conc = picking_predictions_at_centres(in_raster, distance_p, block_width,
                                               block_height, graticule_names_p, scores_str,
-                                              min_size_test_str,  max_size_test_str, config_version, output_dir)
+                                              min_size_test_str,  max_size_test_str, config_version, output_dir, is_tta)
 
     # Removal of duplicates with Non Maximum Suppression - Slow for large number of boulders (use torchvision.ops.batched_nms?)
     gdf_final = nms(gdf_conc, nms_thresh_test)
+
     boulder_predictions_final = output_dir / "shp" / (in_raster.stem + "-" + "boulder-predictions" + "-" +
-                                                      scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + ".shp")
+                                scores_str + "-" + min_size_test_str + "-" + max_size_test_str + "-" + config_version + suff)
+
     gdf_final.to_file(boulder_predictions_final)
 
     return gdf_final
 
 
 def nms(gdf, nms_thresh_test):
-    print("...Removing duplicated boulders with non-maximum suppression...")
+    """
+    This is not working when index is not linearly increasing...
+    Args:
+        gdf:
+        nms_thresh_test:
+
+    Returns:
+
+    """
+    #print("...Removing duplicated boulders with non-maximum suppression...")
     gdf_copy = gdf.copy()
 
     bboxes = gdf_copy.geometry.bounds.to_numpy()
@@ -1089,10 +1143,10 @@ def nms(gdf, nms_thresh_test):
 
     scores = gdf_copy.scores.to_numpy()
     scores_torch = torch.from_numpy(scores)
-    idxs_torch = torch.from_numpy(np.zeros(gdf_copy.shape[0]).astype("int"))
+    #idxs_torch = torch.from_numpy(np.zeros(gdf_copy.shape[0]).astype("int"))
 
-    #nms_filtered = torchvision.ops.nms(boxes=bboxes_torch, scores=scores_torch, iou_threshold=nms_thresh_test)
-    nms_filtered = torchvision.ops.batched_nms(boxes=bboxes_torch, scores=scores_torch, idxs=idxs_torch, iou_threshold=nms_thresh_test)
+    nms_filtered = torchvision.ops.nms(boxes=bboxes_torch, scores=scores_torch, iou_threshold=nms_thresh_test)
+    #nms_filtered = torchvision.ops.batched_nms(boxes=bboxes_torch, scores=scores_torch, idxs=idxs_torch, iou_threshold=nms_thresh_test)
     gdf_nms = gdf_copy[gdf_copy.index.isin(nms_filtered.numpy())]
     return gdf_nms
 
