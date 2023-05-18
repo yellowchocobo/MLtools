@@ -76,25 +76,31 @@ def boulder_summarize(self):
         return mean_s
 
     def _summarizeDets():
-        stats = np.zeros((18,))
+        stats = np.zeros((24,))
         stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
-        stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
-        stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
-        stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
-        stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
-        stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
-        stats[6] = _summarize(1, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
-        stats[7] = _summarize(1, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
-        stats[8] = _summarize(1, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
-        stats[9] = _summarize(0, maxDets=self.params.maxDets[0])
-        stats[10] = _summarize(0, maxDets=self.params.maxDets[1])
-        stats[11] = _summarize(0, maxDets=self.params.maxDets[2])
-        stats[12] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
-        stats[13] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
-        stats[14] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
-        stats[15] = _summarize(0, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
-        stats[16] = _summarize(0, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
-        stats[17] = _summarize(0, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[1] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[2] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[3] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[4] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
+        stats[5] = _summarize(1, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[6] = _summarize(1, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[7] = _summarize(1, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[8] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
+        stats[9] = _summarize(1, iouThr=.75, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[10] = _summarize(1, iouThr=.75, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[11] = _summarize(1, iouThr=.75, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[12] = _summarize(0, maxDets=self.params.maxDets[2])
+        stats[13] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[14] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[15] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[16] = _summarize(0, iouThr=.5, maxDets=self.params.maxDets[2])
+        stats[17] = _summarize(0, iouThr=.5, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[18] = _summarize(0, iouThr=.5, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[19] = _summarize(0, iouThr=.5, areaRng='large', maxDets=self.params.maxDets[2])
+        stats[20] = _summarize(0, iouThr=.75, maxDets=self.params.maxDets[2])
+        stats[21] = _summarize(0, iouThr=.75, areaRng='small', maxDets=self.params.maxDets[2])
+        stats[22] = _summarize(0, iouThr=.75, areaRng='medium', maxDets=self.params.maxDets[2])
+        stats[23] = _summarize(0, iouThr=.75, areaRng='large', maxDets=self.params.maxDets[2])
         return stats
 
     def _summarizeKps():
@@ -356,11 +362,22 @@ class BoulderEvaluator(DatasetEvaluator):
                 if len(coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
-
+            
+            # added by nilscp (25/04/2023)
             task_f = os.path.join(self._output_dir, task + ".txt")
-            with open(task_f, "a") as src:
-                src.write(coco_eval.stats)
-                src.write("\n")
+            try:
+                df = pd.read_csv(task_f)
+                df.loc[len(df)] = coco_eval.stats
+                df.to_csv(task_f, header=True, sep=',', index=False)
+            except:
+                df = pd.DataFrame(columns=["mAP_all", "mAP_small", "mAP_medium", "mAP_large",
+                               "AP50_all", "AP50_small", "AP50_medium", "AP50_large",
+                               "AP75_all", "AP75_small", "AP75_medium", "AP75_large",
+                               "mAR_all", "mAR_small", "mAR_medium", "mAR_large",
+                               "AR50_all", "AR50_small", "AR50_medium", "AR50_large",
+                               "AR75_all", "AR75_small", "AR75_medium", "AR75_large"])
+                df.loc[len(df)] = coco_eval.stats
+                df.to_csv(task_f, header=True, sep=',', index=False)
 
             res = self._derive_coco_results(
                 coco_eval, task,
@@ -444,8 +461,7 @@ class BoulderEvaluator(DatasetEvaluator):
             for idx, metric in enumerate(metrics)
         }
         self._logger.info(
-            "Evaluation results for {}: \n".format(
-                iou_type) + create_small_table(results)
+            "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
         )
         if not np.isfinite(sum(results.values())):
             self._logger.info(
@@ -466,8 +482,7 @@ class BoulderEvaluator(DatasetEvaluator):
             precision = precisions[:, :, idx, 0, -1]
             precision = precision[precision > -1]
             ap = np.mean(precision) if precision.size else float("nan")
-            results_per_category.append(
-                ("{}".format(name), float(ap * 100)))
+            results_per_category.append(("{}".format(name), float(ap * 100)))
 
         # tabulate it
         N_COLS = min(6, len(results_per_category) * 2)
@@ -746,14 +761,3 @@ def _evaluate_predictions_on_coco(
     coco_eval.summarize()
 
     return coco_eval
-
-# would be interesting to see the number of inputs/ouputs
-class Counter(DatasetEvaluator):
-  def reset(self):
-    self.count = 0
-  def process(self, inputs, outputs):
-    for output in outputs:
-      self.count += len(output["instances"])
-  def evaluate(self):
-    # save self.count somewhere, or print it, or return it.
-    return {"count": self.count}
