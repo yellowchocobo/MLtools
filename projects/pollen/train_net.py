@@ -11,6 +11,7 @@ from detectron2.data import build_detection_train_loader, build_detection_test_l
 from detectron2.engine import DefaultTrainer, default_setup, launch
 from detectron2.engine.hooks import HookBase
 from detectron2.checkpoint import DetectionCheckpointer
+from detectron2.evaluation import COCOEvaluator
 
 # pollen project
 from config import add_config
@@ -107,7 +108,7 @@ def setup(args):
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.MODEL.DEVICE = device
-    cfg.freeze()
+    #cfg.freeze()
     default_setup(cfg, args)
     #config_file_complete = Path(args.config_file).with_name(Path(args.config_file).stem + "-complete.yaml")
     #with open(config_file_complete, "w") as f:

@@ -120,7 +120,7 @@ def setup(args):
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.MODEL.DEVICE = device
-    cfg.freeze()
+    #cfg.freeze()
     default_setup(cfg, args)
     #config_file_complete = Path(args.config_file).with_name(Path(args.config_file).stem + "-complete.yaml")
     #with open(config_file_complete, "w") as f:

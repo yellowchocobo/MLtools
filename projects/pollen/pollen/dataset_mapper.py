@@ -15,7 +15,7 @@ class AlbumentMapper:
     """Mapper which uses `albumentations` augmentations. Boulder outlines are
     defined as X and Y coordinates."""
 
-    @configurable
+    #@configurable
     def __init__(self, cfg, is_train: bool = True):
         aug_dict = load_aug_dict(cfg.MODEL.AUGMENTATIONS.PATH)
         if is_train:
@@ -23,7 +23,7 @@ class AlbumentMapper:
             # A.Compose(aug_list, bbox_params=A.BboxParams(format='coco', min_area=16, label_fields=["bbox_classes"]))
             self.transform = A.from_dict(aug_dict)
         else:
-            self.transform = A.Compose([])
+            self.transform = A.Compose([], bbox_params=A.BboxParams(format='coco', min_area=16, label_fields=["bbox_classes"]))
             # else, it gives an empty list, which is equivalent to NoOp
         self.is_train = is_train
 
