@@ -68,7 +68,7 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
     :param detections_per_image: Maximum number of detections to return per
     image during inference
 
-    is connectivity = 4 in features.shape?
+    connectivity = 4 by default in features.shape?
 
     :return:
     """
@@ -105,6 +105,8 @@ def predict(config_file, model_weights, device, image_dir, out_shapefile,
 
             # loading image
             array = utils.read_image(png, format="BGR")
+
+            # I could actually double the size of the image here
 
             # inference
             outputs = predictor(array)

@@ -323,6 +323,7 @@ def annotations_to_df(df_selection_tiles, dataset_directory, block_width, block_
             masks = np.zeros((gdf.shape[0], arr.shape[1], arr.shape[2])).astype(
                 'uint8')
 
+            # https://rasterio.readthedocs.io/en/stable/api/rasterio.mask.html
             for i, row_gdf in gdf.iterrows():
                 out, tt = rio.mask.mask(src, [row_gdf.geometry],
                                         all_touched=False, invert=False)

@@ -23,12 +23,12 @@ class AlbumentMapper:
             # A.Compose(aug_list, bbox_params=A.BboxParams(format='coco', min_area=16, label_fields=["bbox_classes"]))
             self.transform = A.from_dict(aug_dict)
         else:
-            self.transform = A.Compose([], bbox_params=A.BboxParams(format='coco', min_area=16, label_fields=["bbox_classes"]))
+            self.transform = A.Compose([A.NoOp(p=1.0)], bbox_params=A.BboxParams(format='coco', min_area=8, label_fields=["bbox_classes"]))
             # else, it gives an empty list, which is equivalent to NoOp
         self.is_train = is_train
 
         mode = "training" if is_train else "inference"
-        print(f"[AlbumentMapper_polygon] Augmentations used in {mode}: {self.transform}")
+        print(f"[AlbumentMapper] Augmentations used in {mode}: {self.transform}")
 
     def __call__(self, dataset_dict):
         dataset_dict = copy.deepcopy(dataset_dict)
