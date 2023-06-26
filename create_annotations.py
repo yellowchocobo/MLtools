@@ -10,7 +10,7 @@ sys.path.append("/home/nilscp/GIT/")
 
 from affine import Affine
 from tqdm import tqdm
-from rastertools import raster
+import rastertools_BOULDERING.raster as raster
 from pathlib import Path
 
 def rm_tree(pth):
